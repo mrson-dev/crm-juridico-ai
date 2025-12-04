@@ -48,6 +48,7 @@ STEPS_TOTAL=0
 STEPS_PASSED=0
 STEPS_FAILED=0
 WARNINGS=0
+AUTO_MODE=false
 
 #-------------------------------------------------------------------------------
 # FUNÇÕES DE UI
@@ -144,7 +145,7 @@ log() {
 }
 
 #-------------------------------------------------------------------------------
-# FUNÇÕES DE VERIFICAÇÃO
+# FUNÇÕES DE VERIFICAÇÃO E INSTALAÇÃO
 #-------------------------------------------------------------------------------
 
 check_command() {
@@ -161,10 +162,143 @@ version_compare() {
     printf '%s\n%s\n' "$2" "$1" | sort -V -C
 }
 
+detect_os() {
+    if [ -f /etc/os-release ]; then
+        . /etc/os-release
+        echo "$ID"
+    elif [ -f /etc/debian_version ]; then
+        echo "debian"
+    elif [ -f /etc/redhat-release ]; then
+        echo "rhel"
+    elif [[ "$OSTYPE" == "darwin"* ]]; then
+        echo "macos"
+    else
+        echo "unknown"
+    fi
+}
+
+install_package() {
+    local package="$1"
+    local os=$(detect_os)
+    
+    print_info "Instalando $package..."
+    
+    case "$os" in
+        ubuntu|debian|pop)
+            if [ "$EUID" -eq 0 ]; then
+                apt-get update -qq >> "$LOG_FILE" 2>&1
+                apt-get install -y "$package" >> "$LOG_FILE" 2>&1
+            else
+                sudo apt-get update -qq >> "$LOG_FILE" 2>&1
+                sudo apt-get install -y "$package" >> "$LOG_FILE" 2>&1
+            fi
+            ;;
+        fedora)
+            sudo dnf install -y "$package" >> "$LOG_FILE" 2>&1
+            ;;
+        rhel|centos)
+            sudo yum install -y "$package" >> "$LOG_FILE" 2>&1
+            ;;
+        arch|manjaro)
+            sudo pacman -S --noconfirm "$package" >> "$LOG_FILE" 2>&1
+            ;;
+        macos)
+            if check_command brew; then
+                brew install "$package" >> "$LOG_FILE" 2>&1
+            else
+                print_error "Homebrew não encontrado. Instale: https://brew.sh"
+                return 1
+            fi
+            ;;
+        *)
+            print_error "Sistema operacional não suportado para instalação automática"
+            return 1
+            ;;
+    esac
+}
+
+install_nodejs() {
+    local os=$(detect_os)
+    
+    print_info "Instalando Node.js v20 LTS..."
+    
+    case "$os" in
+        ubuntu|debian|pop)
+            # Usar NodeSource para versão LTS
+            if [ "$EUID" -eq 0 ]; then
+                curl -fsSL https://deb.nodesource.com/setup_20.x | bash - >> "$LOG_FILE" 2>&1
+                apt-get install -y nodejs >> "$LOG_FILE" 2>&1
+            else
+                curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - >> "$LOG_FILE" 2>&1
+                sudo apt-get install -y nodejs >> "$LOG_FILE" 2>&1
+            fi
+            ;;
+        fedora)
+            sudo dnf module install -y nodejs:20 >> "$LOG_FILE" 2>&1
+            ;;
+        rhel|centos)
+            curl -fsSL https://rpm.nodesource.com/setup_20.x | sudo bash - >> "$LOG_FILE" 2>&1
+            sudo yum install -y nodejs >> "$LOG_FILE" 2>&1
+            ;;
+        arch|manjaro)
+            sudo pacman -S --noconfirm nodejs npm >> "$LOG_FILE" 2>&1
+            ;;
+        macos)
+            if check_command brew; then
+                brew install node@20 >> "$LOG_FILE" 2>&1
+            else
+                print_error "Homebrew não encontrado. Instale: https://brew.sh"
+                return 1
+            fi
+            ;;
+        *)
+            print_error "Sistema não suportado. Instale Node.js manualmente: https://nodejs.org"
+            return 1
+            ;;
+    esac
+}
+
+install_docker() {
+    local os=$(detect_os)
+    
+    print_info "Instalando Docker..."
+    
+    case "$os" in
+        ubuntu|debian|pop)
+            # Instalar Docker oficial
+            if [ "$EUID" -eq 0 ]; then
+                apt-get update -qq >> "$LOG_FILE" 2>&1
+                apt-get install -y ca-certificates curl gnupg >> "$LOG_FILE" 2>&1
+                install -m 0755 -d /etc/apt/keyrings
+                curl -fsSL https://download.docker.com/linux/$os/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg >> "$LOG_FILE" 2>&1
+                chmod a+r /etc/apt/keyrings/docker.gpg
+                echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/$os $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+                apt-get update -qq >> "$LOG_FILE" 2>&1
+                apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin >> "$LOG_FILE" 2>&1
+            else
+                curl -fsSL https://get.docker.com | sudo sh >> "$LOG_FILE" 2>&1
+                sudo usermod -aG docker $USER
+                print_warning "Você precisará fazer logout/login para usar Docker sem sudo"
+            fi
+            ;;
+        macos)
+            print_error "No macOS, instale Docker Desktop: https://www.docker.com/products/docker-desktop"
+            return 1
+            ;;
+        *)
+            print_error "Sistema não suportado. Instale Docker manualmente: https://docs.docker.com/get-docker/"
+            return 1
+            ;;
+    esac
+}
+
 check_prerequisites() {
     print_section "1. VERIFICANDO PRÉ-REQUISITOS"
     
     local all_ok=true
+    local os=$(detect_os)
+    print_info "Sistema detectado: $os"
+    echo ""
     
     # Docker
     print_step "1.1" "Verificando Docker..."
@@ -176,8 +310,13 @@ check_prerequisites() {
             print_warning "Docker $docker_version (recomendado: $DOCKER_MIN_VERSION+)"
         fi
     else
-        print_error "Docker não encontrado. Instale: https://docs.docker.com/get-docker/"
-        all_ok=false
+        print_warning "Docker não encontrado. Tentando instalar..."
+        if install_docker; then
+            print_success "Docker instalado com sucesso"
+        else
+            print_error "Falha ao instalar Docker. Instale manualmente: https://docs.docker.com/get-docker/"
+            all_ok=false
+        fi
     fi
     
     # Docker Compose
@@ -188,8 +327,10 @@ check_prerequisites() {
     elif check_command docker-compose; then
         print_success "Docker Compose (legacy) instalado"
     else
-        print_error "Docker Compose não encontrado"
-        all_ok=false
+        print_warning "Docker Compose vem incluído no Docker moderno"
+        if check_command docker; then
+            print_info "Tente: docker compose version"
+        fi
     fi
     
     # Python
@@ -203,8 +344,13 @@ check_prerequisites() {
             all_ok=false
         fi
     else
-        print_error "Python não encontrado"
-        all_ok=false
+        print_warning "Python não encontrado. Tentando instalar..."
+        if install_package python3; then
+            print_success "Python instalado"
+        else
+            print_error "Falha ao instalar Python"
+            all_ok=false
+        fi
     fi
     
     # Poetry
@@ -216,6 +362,10 @@ check_prerequisites() {
         print_warning "Poetry não encontrado. Instalando..."
         curl -sSL https://install.python-poetry.org | python3 - >> "$LOG_FILE" 2>&1
         export PATH="$HOME/.local/bin:$PATH"
+        # Adicionar ao .bashrc se não estiver
+        if ! grep -q 'poetry' ~/.bashrc 2>/dev/null; then
+            echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
+        fi
         if check_command poetry; then
             print_success "Poetry instalado com sucesso"
         else
@@ -231,21 +381,51 @@ check_prerequisites() {
         if version_compare "$node_version" "$NODE_MIN_VERSION"; then
             print_success "Node.js v$node_version instalado"
         else
-            print_warning "Node.js v$node_version (recomendado: v$NODE_MIN_VERSION+)"
+            print_warning "Node.js v$node_version é antigo. Atualizando para v20 LTS..."
+            if install_nodejs; then
+                hash -r  # Refresh PATH
+                print_success "Node.js atualizado"
+            else
+                print_warning "Não foi possível atualizar Node.js automaticamente"
+            fi
         fi
     else
-        print_error "Node.js não encontrado. Instale: https://nodejs.org/"
-        all_ok=false
+        print_warning "Node.js não encontrado. Instalando v20 LTS..."
+        if install_nodejs; then
+            hash -r  # Refresh PATH
+            if check_command node; then
+                local node_version=$(node --version | grep -oE '[0-9]+' | head -1)
+                print_success "Node.js v$node_version instalado"
+            else
+                print_error "Node.js instalado mas não encontrado no PATH"
+                print_info "Tente abrir um novo terminal e executar novamente"
+                all_ok=false
+            fi
+        else
+            print_error "Falha ao instalar Node.js. Instale manualmente: https://nodejs.org/"
+            all_ok=false
+        fi
     fi
     
-    # npm
+    # npm (vem com Node.js)
     print_step "1.6" "Verificando npm..."
     if check_command npm; then
         local npm_version=$(npm --version)
         print_success "npm $npm_version instalado"
     else
-        print_error "npm não encontrado"
-        all_ok=false
+        if check_command node; then
+            print_warning "npm não encontrado. Tentando instalar..."
+            install_package npm >> "$LOG_FILE" 2>&1 || true
+            if check_command npm; then
+                print_success "npm instalado"
+            else
+                print_error "npm não encontrado (deveria vir com Node.js)"
+                all_ok=false
+            fi
+        else
+            print_error "npm requer Node.js"
+            all_ok=false
+        fi
     fi
     
     # Git
@@ -254,8 +434,13 @@ check_prerequisites() {
         local git_version=$(git --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
         print_success "Git $git_version instalado"
     else
-        print_error "Git não encontrado"
-        all_ok=false
+        print_warning "Git não encontrado. Instalando..."
+        if install_package git; then
+            print_success "Git instalado"
+        else
+            print_error "Falha ao instalar Git"
+            all_ok=false
+        fi
     fi
     
     # curl
@@ -263,21 +448,33 @@ check_prerequisites() {
     if check_command curl; then
         print_success "curl instalado"
     else
-        print_error "curl não encontrado"
-        all_ok=false
+        print_warning "curl não encontrado. Instalando..."
+        if install_package curl; then
+            print_success "curl instalado"
+        else
+            print_error "Falha ao instalar curl"
+            all_ok=false
+        fi
     fi
     
-    # jq (opcional mas útil)
+    # jq (opcional mas útil - instalar automaticamente)
     print_step "1.9" "Verificando jq..."
     if check_command jq; then
         print_success "jq instalado"
     else
-        print_warning "jq não encontrado (opcional, usado para formatar JSON)"
+        print_info "jq não encontrado. Instalando (opcional)..."
+        if install_package jq >> "$LOG_FILE" 2>&1; then
+            print_success "jq instalado"
+        else
+            print_warning "jq não instalado (opcional, usado para formatar JSON)"
+        fi
     fi
     
     echo ""
     if [ "$all_ok" = false ]; then
-        print_error "Alguns pré-requisitos não foram atendidos. Corrija os erros acima."
+        print_error "Alguns pré-requisitos não foram atendidos."
+        print_info "Tente abrir um novo terminal e executar novamente."
+        print_info "Ou instale manualmente os pacotes que falharam."
         exit 1
     fi
     
@@ -636,6 +833,7 @@ show_help() {
     echo ""
     echo "Opções:"
     echo "  --help, -h      Mostra esta ajuda"
+    echo "  --auto, -y      Execução automática sem prompts (instala tudo)"
     echo "  --check         Apenas verifica pré-requisitos"
     echo "  --infra         Apenas inicia infraestrutura (DB + Redis)"
     echo "  --backend       Apenas configura backend"
@@ -644,7 +842,12 @@ show_help() {
     echo "  --stop          Para todos os serviços"
     echo "  --clean         Para e remove todos os dados"
     echo ""
-    echo "Sem argumentos: executa configuração completa"
+    echo "Sem argumentos: executa configuração completa (interativo)"
+    echo ""
+    echo "Exemplos:"
+    echo "  $0              # Interativo, pede confirmação"
+    echo "  $0 --auto       # Automático, instala tudo sem perguntar"
+    echo "  $0 --check      # Apenas verifica (e instala) dependências"
 }
 
 stop_services() {
@@ -694,6 +897,19 @@ main() {
             show_help
             exit 0
             ;;
+        --auto|-y)
+            # Modo automático - executa tudo sem prompts
+            AUTO_MODE=true
+            print_banner
+            check_prerequisites
+            setup_environment_files
+            start_infrastructure
+            setup_backend
+            setup_frontend
+            start_services
+            test_api_endpoints
+            print_summary
+            ;;
         --check)
             print_banner
             check_prerequisites
@@ -723,17 +939,19 @@ main() {
             clean_all
             ;;
         "")
-            # Execução completa
+            # Execução completa interativa
             print_banner
             
             echo -e "${WHITE}  Este script irá:${NC}"
-            echo -e "${DIM}    1. Verificar pré-requisitos (Docker, Python, Node.js, etc.)${NC}"
+            echo -e "${DIM}    1. Verificar e instalar pré-requisitos (Docker, Python, Node.js, etc.)${NC}"
             echo -e "${DIM}    2. Configurar arquivos de ambiente (.env)${NC}"
             echo -e "${DIM}    3. Iniciar infraestrutura (PostgreSQL, Redis)${NC}"
             echo -e "${DIM}    4. Configurar e testar backend (FastAPI)${NC}"
             echo -e "${DIM}    5. Configurar e testar frontend (React)${NC}"
             echo -e "${DIM}    6. Iniciar todos os serviços${NC}"
             echo -e "${DIM}    7. Testar endpoints da API${NC}"
+            echo ""
+            echo -e "${CYAN}  💡 Dica: Use ${WHITE}--auto${CYAN} para execução sem prompts${NC}"
             echo ""
             
             read -p "  Pressione ENTER para continuar ou CTRL+C para cancelar..."
