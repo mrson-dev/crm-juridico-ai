@@ -65,8 +65,8 @@ print_banner() {
     echo "║    ╚██████╗██║  ██║██║ ╚═╝ ██║    ╚█████╔╝╚██████╔╝██║  ██║██║██████╔╝      ║"
     echo "║     ╚═════╝╚═╝  ╚═╝╚═╝     ╚═╝     ╚════╝  ╚═════╝ ╚═╝  ╚═╝╚═╝╚═════╝       ║"
     echo "║                                                                              ║"
-    echo "║                    ${WHITE}Configuração do Ambiente de Desenvolvimento${CYAN}              ║"
-    echo "║                         ${DIM}Direito Previdenciário + IA${CYAN}                          ║"
+    echo -e "║                    ${WHITE}Configuração do Ambiente de Desenvolvimento${CYAN}              ║"
+    echo -e "║                         ${DIM}Direito Previdenciário + IA${CYAN}                          ║"
     echo "║                                                                              ║"
     echo "╚══════════════════════════════════════════════════════════════════════════════╝"
     echo -e "${NC}"
@@ -96,19 +96,19 @@ print_substep() {
 print_success() {
     local message="$1"
     echo -e "${GREEN}  ✓${NC} $message"
-    ((STEPS_PASSED++))
+    STEPS_PASSED=$((STEPS_PASSED + 1))
 }
 
 print_error() {
     local message="$1"
     echo -e "${RED}  ✗${NC} $message"
-    ((STEPS_FAILED++))
+    STEPS_FAILED=$((STEPS_FAILED + 1))
 }
 
 print_warning() {
     local message="$1"
     echo -e "${YELLOW}  ⚠${NC} $message"
-    ((WARNINGS++))
+    WARNINGS=$((WARNINGS + 1))
 }
 
 print_info() {
