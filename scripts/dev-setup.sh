@@ -43,6 +43,10 @@ declare -A MIN_VERSIONS=(
     [docker]="20"
 )
 
+# Controle
+VERBOSE=false
+START_TIME=$(date +%s)
+
 #-------------------------------------------------------------------------------
 # FUNÇÕES DE UI
 #-------------------------------------------------------------------------------
@@ -53,12 +57,12 @@ banner() {
     cat << 'EOF'
 ╔══════════════════════════════════════════════════════════════════════════════╗
 ║                                                                              ║
-║     ██████╗██████╗ ███╗   ███╗         ██╗██╗   ██╗██████╗ ██╗██████╗       ║
-║    ██╔════╝██╔══██╗████╗ ████║         ██║██║   ██║██╔══██╗██║██╔══██╗      ║
-║    ██║     ██████╔╝██╔████╔██║         ██║██║   ██║██████╔╝██║██║  ██║      ║
-║    ██║     ██╔══██╗██║╚██╔╝██║    ██   ██║██║   ██║██╔══██╗██║██║  ██║      ║
-║    ╚██████╗██║  ██║██║ ╚═╝ ██║    ╚█████╔╝╚██████╔╝██║  ██║██║██████╔╝      ║
-║     ╚═════╝╚═╝  ╚═╝╚═╝     ╚═╝     ╚════╝  ╚═════╝ ╚═╝  ╚═╝╚═╝╚═════╝       ║
+║     ██████╗██████╗ ███╗   ███╗         ██╗██╗   ██╗██████╗ ██╗██████╗        ║
+║    ██╔════╝██╔══██╗████╗ ████║         ██║██║   ██║██╔══██╗██║██╔══██╗       ║
+║    ██║     ██████╔╝██╔████╔██║         ██║██║   ██║██████╔╝██║██║  ██║       ║
+║    ██║     ██╔══██╗██║╚██╔╝██║    ██   ██║██║   ██║██╔══██╗██║██║  ██║       ║
+║    ╚██████╗██║  ██║██║ ╚═╝ ██║    ╚█████╔╝╚██████╔╝██║  ██║██║██████╔╝       ║
+║     ╚═════╝╚═╝  ╚═╝╚═╝     ╚═╝     ╚════╝  ╚═════╝ ╚═╝  ╚═╝╚═╝╚═════╝        ║
 ║                                                                              ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 EOF
@@ -87,6 +91,35 @@ explain() {
 }
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOG"; }
+
+# Log verbose - mostra erros em tempo real
+vlog() {
+    if [[ "$VERBOSE" == "true" ]]; then
+        "$@" 2>&1 | tee -a "$LOG"
+    else
+        "$@" >> "$LOG" 2>&1
+    fi
+}
+
+# Mostra tempo decorrido
+show_duration() {
+    local end_time=$(date +%s)
+    local duration=$((end_time - START_TIME))
+    local mins=$((duration / 60))
+    local secs=$((duration % 60))
+    echo ""
+    info "Tempo total: ${mins}m ${secs}s"
+}
+
+# Confirmação do usuário
+confirm() {
+    local msg="$1"
+    echo ""
+    echo -e "${Y}  ⚠️  $msg${N}"
+    echo ""
+    read -p "  Digite 'sim' para confirmar: " answer
+    [[ "$answer" == "sim" || "$answer" == "SIM" || "$answer" == "s" || "$answer" == "S" ]]
+}
 
 # Verificação de comando
 has() { command -v "$1" &>/dev/null; }
@@ -376,7 +409,11 @@ start_infra() {
     
     step "2" "Iniciando PostgreSQL + Redis"
     wait_msg "Subindo containers"
-    docker compose up -d db redis >> "$LOG" 2>&1
+    if [[ "$VERBOSE" == "true" ]]; then
+        docker compose up -d db redis 2>&1 | tee -a "$LOG"
+    else
+        docker compose up -d db redis >> "$LOG" 2>&1
+    fi
     done_msg
     
     step "3" "Aguardando PostgreSQL"
@@ -433,7 +470,11 @@ setup_backend() {
     step "1" "Instalando dependências Python"
     explain "Poetry gerencia virtualenv e pacotes automaticamente"
     wait_msg "poetry install"
-    poetry install >> "$LOG" 2>&1
+    if [[ "$VERBOSE" == "true" ]]; then
+        poetry install 2>&1 | tee -a "$LOG"
+    else
+        poetry install >> "$LOG" 2>&1
+    fi
     done_msg
     ok "Dependências instaladas"
     
@@ -465,7 +506,11 @@ setup_frontend() {
     
     step "1" "Instalando dependências Node.js"
     wait_msg "npm install"
-    npm install >> "$LOG" 2>&1
+    if [[ "$VERBOSE" == "true" ]]; then
+        npm install 2>&1 | tee -a "$LOG"
+    else
+        npm install >> "$LOG" 2>&1
+    fi
     done_msg
     ok "Dependências instaladas"
     
@@ -632,6 +677,14 @@ show_status() {
         err "Parado"
     fi
     
+    # Celery Worker (opcional)
+    step "5" "Celery Worker (opcional)"
+    if pgrep -f "celery.*worker" >/dev/null; then
+        ok "Worker rodando"
+    else
+        info "Não iniciado (opcional para dev)"
+    fi
+    
     echo ""
     echo -e "${C}  ┌─────────────────────────────────────────────────────────────┐${N}"
     echo -e "${C}  │${N}  🚀 API:      ${G}http://localhost:${PORTS[backend]}${N}                     ${C}│${N}"
@@ -728,13 +781,33 @@ stop_all() {
     ok "Tudo parado!"
 }
 
+restart_all() {
+    section "🔄 REINICIANDO SERVIÇOS"
+    
+    info "Parando serviços..."
+    stop_all
+    
+    echo ""
+    info "Iniciando serviços..."
+    start_infra
+    
+    echo ""
+    ok "Serviços reiniciados!"
+    show_status
+}
+
 clean_all() {
     section "🧹 LIMPANDO AMBIENTE"
+    
+    if ! confirm "Isso irá APAGAR todos os dados do banco de dados!"; then
+        info "Operação cancelada."
+        return 0
+    fi
     
     stop_all
     
     step "3" "Removendo volumes Docker"
-    explain "Isso apaga todos os dados do banco!"
+    explain "Apagando dados do PostgreSQL e Redis..."
     docker compose down -v >> "$LOG" 2>&1 || true
     ok "Volumes removidos"
     
@@ -744,6 +817,25 @@ clean_all() {
     
     echo ""
     ok "Ambiente limpo!"
+}
+
+#-------------------------------------------------------------------------------
+# RESTART
+#-------------------------------------------------------------------------------
+
+restart_all() {
+    section "🔄 REINICIANDO SERVIÇOS"
+    
+    explain "Parando e reiniciando todos os serviços..."
+    echo ""
+    
+    stop_all
+    start_infra
+    start_services
+    
+    echo ""
+    ok "Serviços reiniciados!"
+    show_status
 }
 
 #-------------------------------------------------------------------------------
@@ -769,6 +861,8 @@ print_summary() {
     echo -e "${D}    tail -f .frontend.log    # Logs do frontend${N}"
     echo -e "${D}    ./scripts/dev-setup.sh --stop   # Parar tudo${N}"
     echo ""
+    
+    show_duration
 }
 
 #-------------------------------------------------------------------------------
@@ -776,37 +870,45 @@ print_summary() {
 #-------------------------------------------------------------------------------
 
 show_menu() {
-    echo ""
-    echo -e "${W}  O que você deseja fazer?${N}"
-    echo ""
-    echo -e "  ${C}1)${N} Setup completo (recomendado para primeira vez)"
-    echo -e "  ${C}2)${N} Apenas verificar pré-requisitos"
-    echo -e "  ${C}3)${N} Apenas iniciar infraestrutura (DB + Redis)"
-    echo -e "  ${C}4)${N} Apenas configurar backend"
-    echo -e "  ${C}5)${N} Apenas configurar frontend"
-    echo -e "  ${C}6)${N} Iniciar serviços (backend + frontend)"
-    echo -e "  ${C}7)${N} Ver status dos serviços"
-    echo -e "  ${C}8)${N} Rodar testes completos (lint + types + coverage)"
-    echo -e "  ${C}9)${N} Parar todos os serviços"
-    echo -e "  ${C}0)${N} Limpar ambiente (remove dados)"
-    echo -e "  ${C}q)${N} Sair"
-    echo ""
-    read -p "  Escolha [1-9, 0, q]: " choice
-    
-    case "$choice" in
-        1) run_full_setup ;;
-        2) check_prerequisites ;;
-        3) start_infra ;;
-        4) setup_backend ;;
-        5) setup_frontend ;;
-        6) start_services ;;
-        7) show_status ;;
-        8) run_full_tests ;;
-        9) stop_all ;;
-        0) clean_all ;;
-        q|Q) echo ""; info "Até logo!"; exit 0 ;;
-        *) warn "Opção inválida"; show_menu ;;
-    esac
+    while true; do
+        echo ""
+        echo -e "${W}  O que você deseja fazer?${N}"
+        echo ""
+        echo -e "  ${C}1)${N} Setup completo (recomendado para primeira vez)"
+        echo -e "  ${C}2)${N} Apenas verificar pré-requisitos"
+        echo -e "  ${C}3)${N} Apenas iniciar infraestrutura (DB + Redis)"
+        echo -e "  ${C}4)${N} Apenas configurar backend"
+        echo -e "  ${C}5)${N} Apenas configurar frontend"
+        echo -e "  ${C}6)${N} Iniciar serviços (backend + frontend)"
+        echo -e "  ${C}7)${N} Ver status dos serviços"
+        echo -e "  ${C}8)${N} Rodar testes completos (lint + types + coverage)"
+        echo -e "  ${C}9)${N} Reiniciar serviços"
+        echo -e "  ${C}0)${N} Parar todos os serviços"
+        echo -e "  ${C}c)${N} Limpar ambiente (remove dados)"
+        echo -e "  ${C}q)${N} Sair"
+        echo ""
+        read -p "  Escolha [1-9, 0, c, q]: " choice
+        
+        case "$choice" in
+            1) run_full_setup ;;
+            2) check_prerequisites ;;
+            3) start_infra ;;
+            4) setup_backend ;;
+            5) setup_frontend ;;
+            6) start_services ;;
+            7) show_status ;;
+            8) run_full_tests ;;
+            9) restart_all ;;
+            0) stop_all ;;
+            c|C) clean_all ;;
+            q|Q) echo ""; info "Até logo!"; exit 0 ;;
+            *) warn "Opção inválida" ;;
+        esac
+        
+        echo ""
+        echo -e "${D}Pressione ENTER para voltar ao menu...${N}"
+        read -r
+    done
 }
 
 run_full_setup() {
@@ -828,7 +930,7 @@ show_help() {
     cat << EOF
 CRM Jurídico AI - Setup de Desenvolvimento
 
-Uso: $0 [comando]
+Uso: $0 [comando] [opções]
 
 Comandos:
   (nenhum)    Menu interativo
@@ -839,11 +941,15 @@ Comandos:
   --backend   Configurar backend
   --frontend  Configurar frontend
   --start     Iniciar backend + frontend
+  --restart   Reiniciar todos os serviços
   --test      Testar endpoints da API
   --status    Ver status dos serviços
   --stop      Parar todos os serviços
   --clean     Parar e remover dados
   --help      Esta ajuda
+
+Opções:
+  --verbose   Modo detalhado (mostra comandos executados)
 
 Exemplos:
   $0              # Menu interativo
@@ -859,6 +965,17 @@ EOF
 main() {
     echo "=== Dev Setup Log - $(date) ===" > "$LOG"
     
+    # Processar flag --verbose primeiro
+    local args=()
+    for arg in "$@"; do
+        if [[ "$arg" == "--verbose" || "$arg" == "-v" ]]; then
+            VERBOSE=true
+        else
+            args+=("$arg")
+        fi
+    done
+    set -- "${args[@]}"
+    
     # Verificar estrutura (exceto help)
     [[ "${1:-}" != "--help" && "${1:-}" != "-h" ]] && check_structure
     
@@ -871,6 +988,7 @@ main() {
         --backend)   banner; setup_backend ;;
         --frontend)  banner; setup_frontend ;;
         --start)     banner; start_services ;;
+        --restart)   banner; restart_all ;;
         --test)      banner; test_api ;;
         --status)    banner; show_status ;;
         --stop)      banner; stop_all ;;
