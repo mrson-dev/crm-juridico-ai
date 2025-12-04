@@ -89,10 +89,8 @@ class HonorarioService:
         with_parcelas: bool = False,
     ) -> ContratoHonorario:
         """Busca contrato por ID."""
-        if with_parcelas:
-            contrato = await self._contrato_repo.get_by_id_with_parcelas(contrato_id)
-        else:
-            contrato = await self._contrato_repo.get_by_id(contrato_id)
+        # Sempre usa get_by_id, pois parcelas são carregadas via lazy="selectin"
+        contrato = await self._contrato_repo.get_by_id(contrato_id)
         
         if not contrato:
             raise ResourceNotFoundError("Contrato", contrato_id)
@@ -211,14 +209,14 @@ class HonorarioService:
     
     async def listar_parcelas_vencidas(self) -> list[ParcelaHonorario]:
         """Lista parcelas vencidas não pagas."""
-        return await self._parcela_repo.get_vencidas()
+        return await self._parcela_repo.get_atrasadas()
     
     async def listar_parcelas_a_vencer(
         self,
         dias: int = 30,
     ) -> list[ParcelaHonorario]:
         """Lista parcelas que vencem nos próximos X dias."""
-        return await self._parcela_repo.get_a_vencer(dias)
+        return await self._parcela_repo.get_proximos_vencimentos(dias)
     
     async def registrar_pagamento(
         self,
@@ -234,21 +232,21 @@ class HonorarioService:
         if not parcela:
             raise ResourceNotFoundError("Parcela", parcela_id)
         
-        if parcela.status == StatusParcela.PAGA:
+        if parcela.status == StatusParcela.PAGO:
             raise BusinessRuleError("Parcela já está paga")
         
-        if parcela.status == StatusParcela.CANCELADA:
+        if parcela.status == StatusParcela.CANCELADO:
             raise BusinessRuleError("Parcela cancelada não pode receber pagamento")
         
         # Calcula novo valor pago
         valor_pago_atual = parcela.valor_pago or Decimal("0")
         novo_valor_pago = valor_pago_atual + dados.valor_pago
         
-        # Determina novo status
+        # Determina novo status (parcialmente pago mantém como pendente se não quitou)
         if novo_valor_pago >= parcela.valor:
-            novo_status = StatusParcela.PAGA
+            novo_status = StatusParcela.PAGO
         else:
-            novo_status = StatusParcela.PARCIALMENTE_PAGA
+            novo_status = StatusParcela.PENDENTE  # Mantém pendente até pagar totalmente
         
         parcela = await self._parcela_repo.update(
             parcela_id,
@@ -282,12 +280,12 @@ class HonorarioService:
         if not parcela:
             raise ResourceNotFoundError("Parcela", parcela_id)
         
-        if parcela.status == StatusParcela.PAGA:
+        if parcela.status == StatusParcela.PAGO:
             raise BusinessRuleError("Parcela já paga não pode ser cancelada")
         
         parcela = await self._parcela_repo.update(
             parcela_id,
-            status=StatusParcela.CANCELADA,
+            status=StatusParcela.CANCELADO,
             observacoes=(parcela.observacoes or "") + f"\nCancelada: {motivo}",
         )
         
@@ -301,25 +299,24 @@ class HonorarioService:
         resumo = await self._calcular_resumo_financeiro()
         
         # Parcelas vencidas
-        vencidas = await self._parcela_repo.get_vencidas()
+        vencidas = await self._parcela_repo.get_atrasadas()
         
         # Parcelas a vencer (30 dias)
-        a_vencer = await self._parcela_repo.get_a_vencer(30)
+        a_vencer = await self._parcela_repo.get_proximos_vencimentos(30)
         
-        # Recebimentos do mês
-        recebimentos_mes = await self._parcela_repo.get_pagas_periodo(
-            data_inicio=datetime.now(timezone.utc).replace(day=1),
-            data_fim=datetime.now(timezone.utc),
-        )
+        # Recebimentos do mês - busca pagas do mês atual
+        pagas = await self._parcela_repo.get_pagas_mes_atual()
         
         return DashboardFinanceiro(
-            resumo=resumo,
-            parcelas_vencidas=vencidas,
-            parcelas_a_vencer=a_vencer,
-            recebimentos_mes=recebimentos_mes,
-            total_vencido=sum(p.valor - (p.valor_pago or 0) for p in vencidas),
-            total_a_vencer=sum(p.valor - (p.valor_pago or 0) for p in a_vencer),
-            total_recebido_mes=sum(p.valor_pago or 0 for p in recebimentos_mes),
+            receita_mes_atual=sum(p.valor_pago or Decimal("0") for p in pagas),
+            receita_mes_anterior=Decimal("0"),  # TODO: implementar busca mês anterior
+            variacao_percentual=0.0,
+            previsao_mes_atual=sum(p.valor for p in a_vencer),
+            recebido_mes_atual=sum(p.valor_pago or Decimal("0") for p in pagas),
+            total_atrasado=sum(p.valor - (p.valor_pago or Decimal("0")) for p in vencidas),
+            parcelas_atrasadas=len(vencidas),
+            proximos_vencimentos=[],  # Simplificado
+            historico_mensal=[],  # TODO: implementar
         )
     
     async def get_resumo_financeiro_cliente(

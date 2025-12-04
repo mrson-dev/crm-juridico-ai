@@ -283,3 +283,22 @@ class ParcelaHonorarioRepository(MultiTenantRepository[ParcelaHonorario]):
             "parcelas_atrasadas": atrasadas_row[0] if atrasadas_row else 0,
             "valor_atrasado": atrasadas_row[1] or Decimal("0") if atrasadas_row else Decimal("0"),
         }
+    
+    async def get_pagas_mes_atual(self) -> list[ParcelaHonorario]:
+        """Lista parcelas pagas no mês atual."""
+        from datetime import datetime
+        
+        hoje = date.today()
+        primeiro_dia = hoje.replace(day=1)
+        
+        result = await self.db.execute(
+            select(ParcelaHonorario)
+            .where(
+                ParcelaHonorario.escritorio_id == self.escritorio_id,
+                ParcelaHonorario.status == StatusParcela.PAGO,
+                ParcelaHonorario.data_pagamento >= primeiro_dia,
+                ParcelaHonorario.data_pagamento <= hoje,
+            )
+            .order_by(ParcelaHonorario.data_pagamento.desc())
+        )
+        return list(result.scalars().all())
