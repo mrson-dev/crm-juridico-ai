@@ -2,210 +2,106 @@
 
 #===============================================================================
 #
-#   CRM JURÍDICO AI - Script de Configuração do Ambiente de Desenvolvimento
+#   CRM JURÍDICO AI - Setup do Ambiente de Desenvolvimento
 #   
-#   Este script configura e testa todo o ambiente de desenvolvimento local
-#   para o CRM Jurídico especializado em Direito Previdenciário.
+#   Script interativo para configurar o ambiente local.
+#   Especializado em Direito Previdenciário com IA.
 #
-#   Autor: CRM Jurídico AI Team
-#   Versão: 1.0.0
-#   Data: 2025-12-04
+#   Uso: ./scripts/dev-setup.sh [comando]
 #
 #===============================================================================
 
-set -e  # Parar em caso de erro
+set -e
 
 #-------------------------------------------------------------------------------
-# CORES E FORMATAÇÃO
+# CONFIGURAÇÃO
 #-------------------------------------------------------------------------------
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-PURPLE='\033[0;35m'
-CYAN='\033[0;36m'
-WHITE='\033[1;37m'
-NC='\033[0m' # No Color
-BOLD='\033[1m'
-DIM='\033[2m'
 
-#-------------------------------------------------------------------------------
-# VARIÁVEIS GLOBAIS
-#-------------------------------------------------------------------------------
+# Cores
+R='\033[0;31m' G='\033[0;32m' Y='\033[1;33m' B='\033[0;34m'
+P='\033[0;35m' C='\033[0;36m' W='\033[1;37m' D='\033[2m' N='\033[0m'
+
+# Diretórios
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
-BACKEND_DIR="$PROJECT_ROOT/backend"
-FRONTEND_DIR="$PROJECT_ROOT/frontend"
-LOG_FILE="$PROJECT_ROOT/.dev-setup.log"
+ROOT="$(dirname "$SCRIPT_DIR")"
+BACKEND="$ROOT/backend"
+FRONTEND="$ROOT/frontend"
+LOG="$ROOT/.dev-setup.log"
 
-# Versões mínimas requeridas
-PYTHON_MIN_VERSION="3.11"
-NODE_MIN_VERSION="18"
-DOCKER_MIN_VERSION="20"
+# Portas
+declare -A PORTS=(
+    [postgres]=5432
+    [redis]=6379
+    [backend]=8000
+    [frontend]=5173
+)
 
-# Portas dos serviços
-PORT_POSTGRES=5432
-PORT_REDIS=6379
-PORT_BACKEND=8000
-PORT_FRONTEND=5173
-
-# Contadores
-STEPS_TOTAL=0
-STEPS_PASSED=0
-STEPS_FAILED=0
-WARNINGS=0
-AUTO_MODE=false
-FULL_MODE=false
+# Versões mínimas
+declare -A MIN_VERSIONS=(
+    [python]="3.11"
+    [node]="18"
+    [docker]="20"
+)
 
 #-------------------------------------------------------------------------------
 # FUNÇÕES DE UI
 #-------------------------------------------------------------------------------
 
-print_banner() {
+banner() {
     clear
-    echo -e "${CYAN}"
-    echo "╔══════════════════════════════════════════════════════════════════════════════╗"
-    echo "║                                                                              ║"
-    echo "║     ██████╗██████╗ ███╗   ███╗         ██╗██╗   ██╗██████╗ ██╗██████╗       ║"
-    echo "║    ██╔════╝██╔══██╗████╗ ████║         ██║██║   ██║██╔══██╗██║██╔══██╗      ║"
-    echo "║    ██║     ██████╔╝██╔████╔██║         ██║██║   ██║██████╔╝██║██║  ██║      ║"
-    echo "║    ██║     ██╔══██╗██║╚██╔╝██║    ██   ██║██║   ██║██╔══██╗██║██║  ██║      ║"
-    echo "║    ╚██████╗██║  ██║██║ ╚═╝ ██║    ╚█████╔╝╚██████╔╝██║  ██║██║██████╔╝      ║"
-    echo "║     ╚═════╝╚═╝  ╚═╝╚═╝     ╚═╝     ╚════╝  ╚═════╝ ╚═╝  ╚═╝╚═╝╚═════╝       ║"
-    echo "║                                                                              ║"
-    echo -e "║                    ${WHITE}Configuração do Ambiente de Desenvolvimento${CYAN}              ║"
-    echo -e "║                         ${DIM}Direito Previdenciário + IA${CYAN}                          ║"
-    echo "║                                                                              ║"
-    echo "╚══════════════════════════════════════════════════════════════════════════════╝"
-    echo -e "${NC}"
+    echo -e "${C}"
+    cat << 'EOF'
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                                                                              ║
+║     ██████╗██████╗ ███╗   ███╗         ██╗██╗   ██╗██████╗ ██╗██████╗       ║
+║    ██╔════╝██╔══██╗████╗ ████║         ██║██║   ██║██╔══██╗██║██╔══██╗      ║
+║    ██║     ██████╔╝██╔████╔██║         ██║██║   ██║██████╔╝██║██║  ██║      ║
+║    ██║     ██╔══██╗██║╚██╔╝██║    ██   ██║██║   ██║██╔══██╗██║██║  ██║      ║
+║    ╚██████╗██║  ██║██║ ╚═╝ ██║    ╚█████╔╝╚██████╔╝██║  ██║██║██████╔╝      ║
+║     ╚═════╝╚═╝  ╚═╝╚═╝     ╚═╝     ╚════╝  ╚═════╝ ╚═╝  ╚═╝╚═╝╚═════╝       ║
+║                                                                              ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+EOF
+    echo -e "${N}"
+}
+
+# Mensagens padronizadas
+ok()    { echo -e "${G}  ✓${N} $1"; }
+err()   { echo -e "${R}  ✗${N} $1"; }
+warn()  { echo -e "${Y}  ⚠${N} $1"; }
+info()  { echo -e "${C}  ℹ${N} $1"; }
+step()  { echo -e "${B}  [$1]${N} $2"; }
+wait_msg() { echo -ne "${Y}  ⏳${N} $1..."; }
+done_msg() { echo -e " ${G}OK${N}"; }
+
+section() {
+    echo ""
+    echo -e "${P}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${N}"
+    echo -e "${P}  $1${N}"
+    echo -e "${P}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${N}"
     echo ""
 }
 
-print_section() {
-    local title="$1"
-    echo ""
-    echo -e "${PURPLE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo -e "${PURPLE}  ${BOLD}$title${NC}"
-    echo -e "${PURPLE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo ""
+explain() {
+    echo -e "${D}      $1${N}"
 }
 
-print_step() {
-    local step_num="$1"
-    local description="$2"
-    echo -e "${BLUE}  [${step_num}]${NC} $description"
-}
+log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOG"; }
 
-print_substep() {
-    local description="$1"
-    echo -e "${DIM}      ├─${NC} $description"
-}
+# Verificação de comando
+has() { command -v "$1" &>/dev/null; }
 
-print_success() {
-    local message="$1"
-    echo -e "${GREEN}  ✓${NC} $message"
-    STEPS_PASSED=$((STEPS_PASSED + 1))
-}
-
-print_error() {
-    local message="$1"
-    echo -e "${RED}  ✗${NC} $message"
-    STEPS_FAILED=$((STEPS_FAILED + 1))
-}
-
-print_warning() {
-    local message="$1"
-    echo -e "${YELLOW}  ⚠${NC} $message"
-    WARNINGS=$((WARNINGS + 1))
-}
-
-print_info() {
-    local message="$1"
-    echo -e "${CYAN}  ℹ${NC} $message"
-}
-
-print_waiting() {
-    local message="$1"
-    echo -ne "${YELLOW}  ⏳${NC} $message"
-}
-
-print_done() {
-    echo -e " ${GREEN}Done!${NC}"
-}
-
-spinner() {
-    local pid=$1
-    local delay=0.1
-    local spinstr='|/-\'
-    while [ "$(ps a | awk '{print $1}' | grep $pid)" ]; do
-        local temp=${spinstr#?}
-        printf " [%c]  " "$spinstr"
-        local spinstr=$temp${spinstr%"$temp"}
-        sleep $delay
-        printf "\b\b\b\b\b\b"
-    done
-    printf "      \b\b\b\b\b\b"
-}
-
-log() {
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOG_FILE"
-}
+# Comparação de versão (retorna 0 se $1 >= $2)
+ver_gte() { printf '%s\n%s\n' "$2" "$1" | sort -V -C; }
 
 #-------------------------------------------------------------------------------
-# FUNÇÕES DE VERIFICAÇÃO E INSTALAÇÃO
+# DETECÇÃO DE SISTEMA
 #-------------------------------------------------------------------------------
-
-verify_project_structure() {
-    # Verifica se os diretórios necessários existem
-    local missing=()
-    
-    if [ ! -d "$BACKEND_DIR" ]; then
-        missing+=("backend/")
-    fi
-    
-    if [ ! -d "$FRONTEND_DIR" ]; then
-        missing+=("frontend/")
-    fi
-    
-    if [ ! -f "$PROJECT_ROOT/docker-compose.yml" ]; then
-        missing+=("docker-compose.yml")
-    fi
-    
-    if [ ${#missing[@]} -gt 0 ]; then
-        print_error "Estrutura do projeto incompleta!"
-        echo ""
-        for item in "${missing[@]}"; do
-            echo -e "  ${RED}✗${NC} Faltando: $item"
-        done
-        echo ""
-        print_info "Certifique-se de estar no diretório raiz do projeto CRM Jurídico AI"
-        print_info "e que todos os diretórios foram criados."
-        exit 1
-    fi
-}
-
-check_command() {
-    local cmd="$1"
-    if command -v "$cmd" &> /dev/null; then
-        return 0
-    else
-        return 1
-    fi
-}
-
-version_compare() {
-    # Returns 0 if $1 >= $2
-    printf '%s\n%s\n' "$2" "$1" | sort -V -C
-}
 
 detect_os() {
-    if [ -f /etc/os-release ]; then
-        . /etc/os-release
+    if [[ -f /etc/os-release ]]; then
+        source /etc/os-release
         echo "$ID"
-    elif [ -f /etc/debian_version ]; then
-        echo "debian"
-    elif [ -f /etc/redhat-release ]; then
-        echo "rhel"
     elif [[ "$OSTYPE" == "darwin"* ]]; then
         echo "macos"
     else
@@ -213,898 +109,747 @@ detect_os() {
     fi
 }
 
-install_package() {
-    local package="$1"
+# Gerenciador de pacotes baseado no OS
+pkg_install() {
+    local pkg="$1"
     local os=$(detect_os)
-    
-    print_info "Instalando $package..."
     
     case "$os" in
         ubuntu|debian|pop|linuxmint)
-            if [ "$EUID" -eq 0 ]; then
-                apt-get update -qq >> "$LOG_FILE" 2>&1
-                apt-get install -y "$package" >> "$LOG_FILE" 2>&1
-            else
-                sudo apt-get update -qq >> "$LOG_FILE" 2>&1
-                sudo apt-get install -y "$package" >> "$LOG_FILE" 2>&1
-            fi
+            sudo apt-get update -qq >> "$LOG" 2>&1
+            sudo apt-get install -y "$pkg" >> "$LOG" 2>&1
             ;;
-        fedora)
-            sudo dnf install -y "$package" >> "$LOG_FILE" 2>&1
-            ;;
-        rhel|centos)
-            sudo yum install -y "$package" >> "$LOG_FILE" 2>&1
-            ;;
-        arch|manjaro)
-            sudo pacman -S --noconfirm "$package" >> "$LOG_FILE" 2>&1
-            ;;
-        macos)
-            if check_command brew; then
-                brew install "$package" >> "$LOG_FILE" 2>&1
-            else
-                print_error "Homebrew não encontrado. Instale: https://brew.sh"
-                return 1
-            fi
-            ;;
-        *)
-            print_error "Sistema operacional não suportado para instalação automática"
-            return 1
-            ;;
+        fedora) sudo dnf install -y "$pkg" >> "$LOG" 2>&1 ;;
+        arch|manjaro) sudo pacman -S --noconfirm "$pkg" >> "$LOG" 2>&1 ;;
+        macos) has brew && brew install "$pkg" >> "$LOG" 2>&1 ;;
+        *) return 1 ;;
     esac
 }
 
-install_nodejs() {
-    local os=$(detect_os)
+#-------------------------------------------------------------------------------
+# VERIFICAÇÃO DE ESTRUTURA
+#-------------------------------------------------------------------------------
+
+check_structure() {
+    local missing=()
     
-    print_info "Instalando Node.js v20 LTS..."
+    [[ ! -d "$BACKEND" ]] && missing+=("backend/")
+    [[ ! -d "$FRONTEND" ]] && missing+=("frontend/")
+    [[ ! -f "$ROOT/docker-compose.yml" ]] && missing+=("docker-compose.yml")
     
-    case "$os" in
-        ubuntu|debian|pop|linuxmint)
-            # Usar NodeSource para versão LTS
-            if [ "$EUID" -eq 0 ]; then
-                curl -fsSL https://deb.nodesource.com/setup_20.x | bash - >> "$LOG_FILE" 2>&1
-                apt-get install -y nodejs >> "$LOG_FILE" 2>&1
-            else
-                curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - >> "$LOG_FILE" 2>&1
-                sudo apt-get install -y nodejs >> "$LOG_FILE" 2>&1
-            fi
-            ;;
-        fedora)
-            sudo dnf module install -y nodejs:20 >> "$LOG_FILE" 2>&1
-            ;;
-        rhel|centos)
-            curl -fsSL https://rpm.nodesource.com/setup_20.x | sudo bash - >> "$LOG_FILE" 2>&1
-            sudo yum install -y nodejs >> "$LOG_FILE" 2>&1
-            ;;
-        arch|manjaro)
-            sudo pacman -S --noconfirm nodejs npm >> "$LOG_FILE" 2>&1
-            ;;
-        macos)
-            if check_command brew; then
-                brew install node@20 >> "$LOG_FILE" 2>&1
-            else
-                print_error "Homebrew não encontrado. Instale: https://brew.sh"
-                return 1
-            fi
-            ;;
-        *)
-            print_error "Sistema não suportado. Instale Node.js manualmente: https://nodejs.org"
-            return 1
-            ;;
-    esac
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        err "Estrutura do projeto incompleta!"
+        for item in "${missing[@]}"; do
+            echo -e "    ${R}✗${N} Faltando: $item"
+        done
+        echo ""
+        info "Execute este script na raiz do projeto CRM Jurídico AI"
+        exit 1
+    fi
 }
+
+#-------------------------------------------------------------------------------
+# INSTALADORES
+#-------------------------------------------------------------------------------
 
 install_docker() {
     local os=$(detect_os)
-    
-    print_info "Instalando Docker..."
-    
-    # Linux Mint usa repositório Ubuntu
     local docker_os="$os"
-    if [ "$os" = "linuxmint" ]; then
-        docker_os="ubuntu"
-    fi
+    [[ "$os" == "linuxmint" ]] && docker_os="ubuntu"
     
     case "$os" in
         ubuntu|debian|pop|linuxmint)
-            # Instalar Docker oficial
-            if [ "$EUID" -eq 0 ]; then
-                apt-get update -qq >> "$LOG_FILE" 2>&1
-                apt-get install -y ca-certificates curl gnupg >> "$LOG_FILE" 2>&1
-                install -m 0755 -d /etc/apt/keyrings
-                curl -fsSL https://download.docker.com/linux/$docker_os/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg >> "$LOG_FILE" 2>&1
-                chmod a+r /etc/apt/keyrings/docker.gpg
-                # Obter codename correto (Linux Mint usa base Ubuntu)
-                local codename
-                if [ "$os" = "linuxmint" ]; then
-                    codename=$(grep UBUNTU_CODENAME /etc/os-release | cut -d= -f2)
-                else
-                    codename=$(. /etc/os-release && echo "$VERSION_CODENAME")
-                fi
-                echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/$docker_os $codename stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
-                apt-get update -qq >> "$LOG_FILE" 2>&1
-                apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin >> "$LOG_FILE" 2>&1
-            else
-                curl -fsSL https://get.docker.com | sudo sh >> "$LOG_FILE" 2>&1
-                sudo usermod -aG docker $USER
-                print_warning "Você precisará fazer logout/login para usar Docker sem sudo"
-            fi
+            curl -fsSL https://get.docker.com | sudo sh >> "$LOG" 2>&1
+            sudo usermod -aG docker "$USER"
+            warn "Faça logout/login para usar Docker sem sudo"
             ;;
         macos)
-            print_error "No macOS, instale Docker Desktop: https://www.docker.com/products/docker-desktop"
+            err "Instale Docker Desktop: https://docker.com/products/docker-desktop"
             return 1
             ;;
-        *)
-            print_error "Sistema não suportado. Instale Docker manualmente: https://docs.docker.com/get-docker/"
+        *) 
+            err "Instale Docker manualmente: https://docs.docker.com/get-docker/"
             return 1
             ;;
     esac
 }
 
-check_prerequisites() {
-    print_section "1. VERIFICANDO PRÉ-REQUISITOS"
-    
-    local all_ok=true
+install_node() {
     local os=$(detect_os)
-    print_info "Sistema detectado: $os"
+    
+    case "$os" in
+        ubuntu|debian|pop|linuxmint)
+            curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - >> "$LOG" 2>&1
+            sudo apt-get install -y nodejs >> "$LOG" 2>&1
+            ;;
+        macos) has brew && brew install node@20 >> "$LOG" 2>&1 ;;
+        *) 
+            err "Instale Node.js manualmente: https://nodejs.org"
+            return 1
+            ;;
+    esac
+}
+
+install_poetry() {
+    curl -sSL https://install.python-poetry.org | python3 - >> "$LOG" 2>&1
+    export PATH="$HOME/.local/bin:$PATH"
+    grep -q '.local/bin' ~/.bashrc 2>/dev/null || echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
+}
+
+#-------------------------------------------------------------------------------
+# VERIFICAÇÃO DE PRÉ-REQUISITOS
+#-------------------------------------------------------------------------------
+
+check_prerequisites() {
+    section "📋 VERIFICANDO PRÉ-REQUISITOS"
+    
+    local os=$(detect_os)
+    info "Sistema: $os"
+    explain "Verificando ferramentas necessárias para desenvolvimento..."
     echo ""
     
+    local all_ok=true
+    
     # Docker
-    print_step "1.1" "Verificando Docker..."
-    if check_command docker; then
-        local docker_version=$(docker --version | grep -oE '[0-9]+\.[0-9]+' | head -1)
-        if version_compare "$docker_version" "$DOCKER_MIN_VERSION"; then
-            print_success "Docker $docker_version instalado"
-        else
-            print_warning "Docker $docker_version (recomendado: $DOCKER_MIN_VERSION+)"
-        fi
+    step "1" "Docker (containerização)"
+    explain "Necessário para PostgreSQL, Redis e deploy"
+    if has docker; then
+        local v=$(docker --version | grep -oE '[0-9]+\.[0-9]+' | head -1)
+        ok "Docker $v instalado"
     else
-        print_warning "Docker não encontrado. Tentando instalar..."
-        if install_docker; then
-            print_success "Docker instalado com sucesso"
-        else
-            print_error "Falha ao instalar Docker. Instale manualmente: https://docs.docker.com/get-docker/"
-            all_ok=false
-        fi
+        warn "Docker não encontrado. Instalando..."
+        install_docker && ok "Docker instalado" || { err "Falha na instalação"; all_ok=false; }
     fi
     
     # Docker Compose
-    print_step "1.2" "Verificando Docker Compose..."
-    if docker compose version &> /dev/null; then
-        local compose_version=$(docker compose version --short 2>/dev/null || echo "v2+")
-        print_success "Docker Compose $compose_version instalado"
-    elif check_command docker-compose; then
-        print_success "Docker Compose (legacy) instalado"
+    step "2" "Docker Compose (orquestração)"
+    explain "Gerencia múltiplos containers (DB, Redis, API)"
+    if docker compose version &>/dev/null; then
+        ok "Docker Compose disponível"
     else
-        print_warning "Docker Compose vem incluído no Docker moderno"
-        if check_command docker; then
-            print_info "Tente: docker compose version"
-        fi
+        warn "Docker Compose não encontrado (incluído no Docker moderno)"
     fi
     
     # Python
-    print_step "1.3" "Verificando Python..."
-    if check_command python3; then
-        local python_version=$(python3 --version | grep -oE '[0-9]+\.[0-9]+')
-        if version_compare "$python_version" "$PYTHON_MIN_VERSION"; then
-            print_success "Python $python_version instalado"
+    step "3" "Python 3.11+ (backend)"
+    explain "Linguagem do backend FastAPI"
+    if has python3; then
+        local v=$(python3 --version | grep -oE '[0-9]+\.[0-9]+')
+        if ver_gte "$v" "${MIN_VERSIONS[python]}"; then
+            ok "Python $v instalado"
         else
-            print_error "Python $python_version (requerido: $PYTHON_MIN_VERSION+)"
+            err "Python $v muito antigo (mínimo: ${MIN_VERSIONS[python]})"
             all_ok=false
         fi
     else
-        print_warning "Python não encontrado. Tentando instalar..."
-        if install_package python3; then
-            print_success "Python instalado"
-        else
-            print_error "Falha ao instalar Python"
-            all_ok=false
-        fi
+        warn "Python não encontrado. Instalando..."
+        pkg_install python3 && ok "Python instalado" || { err "Falha"; all_ok=false; }
     fi
     
     # Poetry
-    print_step "1.4" "Verificando Poetry..."
-    if check_command poetry; then
-        local poetry_version=$(poetry --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
-        print_success "Poetry $poetry_version instalado"
+    step "4" "Poetry (gerenciador de pacotes Python)"
+    explain "Gerencia dependências e virtualenv do backend"
+    if has poetry; then
+        ok "Poetry instalado"
     else
-        print_warning "Poetry não encontrado. Instalando..."
-        curl -sSL https://install.python-poetry.org | python3 - >> "$LOG_FILE" 2>&1
-        export PATH="$HOME/.local/bin:$PATH"
-        # Adicionar ao .bashrc se não estiver
-        if ! grep -q 'poetry' ~/.bashrc 2>/dev/null; then
-            echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
-        fi
-        if check_command poetry; then
-            print_success "Poetry instalado com sucesso"
-        else
-            print_error "Falha ao instalar Poetry"
-            all_ok=false
-        fi
+        warn "Poetry não encontrado. Instalando..."
+        install_poetry && ok "Poetry instalado" || { err "Falha"; all_ok=false; }
     fi
     
     # Node.js
-    print_step "1.5" "Verificando Node.js..."
-    if check_command node; then
-        local node_version=$(node --version | grep -oE '[0-9]+' | head -1)
-        if version_compare "$node_version" "$NODE_MIN_VERSION"; then
-            print_success "Node.js v$node_version instalado"
+    step "5" "Node.js 18+ (frontend)"
+    explain "Runtime do React/Vite"
+    if has node; then
+        local v=$(node --version | grep -oE '[0-9]+' | head -1)
+        if ver_gte "$v" "${MIN_VERSIONS[node]}"; then
+            ok "Node.js v$v instalado"
         else
-            print_warning "Node.js v$node_version é antigo. Atualizando para v20 LTS..."
-            if install_nodejs; then
-                hash -r  # Refresh PATH
-                print_success "Node.js atualizado"
-            else
-                print_warning "Não foi possível atualizar Node.js automaticamente"
-            fi
+            warn "Node.js v$v antigo. Atualizando..."
+            install_node && ok "Node.js atualizado" || warn "Atualize manualmente"
         fi
     else
-        print_warning "Node.js não encontrado. Instalando v20 LTS..."
-        if install_nodejs; then
-            hash -r  # Refresh PATH
-            if check_command node; then
-                local node_version=$(node --version | grep -oE '[0-9]+' | head -1)
-                print_success "Node.js v$node_version instalado"
-            else
-                print_error "Node.js instalado mas não encontrado no PATH"
-                print_info "Tente abrir um novo terminal e executar novamente"
-                all_ok=false
-            fi
-        else
-            print_error "Falha ao instalar Node.js. Instale manualmente: https://nodejs.org/"
-            all_ok=false
-        fi
-    fi
-    
-    # npm (vem com Node.js)
-    print_step "1.6" "Verificando npm..."
-    if check_command npm; then
-        local npm_version=$(npm --version)
-        print_success "npm $npm_version instalado"
-    else
-        if check_command node; then
-            print_warning "npm não encontrado. Tentando instalar..."
-            install_package npm >> "$LOG_FILE" 2>&1 || true
-            if check_command npm; then
-                print_success "npm instalado"
-            else
-                print_error "npm não encontrado (deveria vir com Node.js)"
-                all_ok=false
-            fi
-        else
-            print_error "npm requer Node.js"
-            all_ok=false
-        fi
+        warn "Node.js não encontrado. Instalando v20..."
+        install_node && ok "Node.js instalado" || { err "Falha"; all_ok=false; }
     fi
     
     # Git
-    print_step "1.7" "Verificando Git..."
-    if check_command git; then
-        local git_version=$(git --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
-        print_success "Git $git_version instalado"
+    step "6" "Git (controle de versão)"
+    explain "Necessário para commits e deploy"
+    if has git; then
+        ok "Git instalado"
     else
-        print_warning "Git não encontrado. Instalando..."
-        if install_package git; then
-            print_success "Git instalado"
-        else
-            print_error "Falha ao instalar Git"
-            all_ok=false
-        fi
+        warn "Git não encontrado. Instalando..."
+        pkg_install git && ok "Git instalado" || { err "Falha"; all_ok=false; }
     fi
     
-    # curl
-    print_step "1.8" "Verificando curl..."
-    if check_command curl; then
-        print_success "curl instalado"
-    else
-        print_warning "curl não encontrado. Instalando..."
-        if install_package curl; then
-            print_success "curl instalado"
-        else
-            print_error "Falha ao instalar curl"
-            all_ok=false
-        fi
-    fi
-    
-    # jq (opcional mas útil - instalar automaticamente)
-    print_step "1.9" "Verificando jq..."
-    if check_command jq; then
-        print_success "jq instalado"
-    else
-        print_info "jq não encontrado. Instalando (opcional)..."
-        if install_package jq >> "$LOG_FILE" 2>&1; then
-            print_success "jq instalado"
-        else
-            print_warning "jq não instalado (opcional, usado para formatar JSON)"
-        fi
-    fi
+    # Ferramentas opcionais
+    step "7" "Ferramentas auxiliares (curl, jq)"
+    explain "Úteis para testes de API e debug"
+    has curl && ok "curl disponível" || { pkg_install curl; }
+    has jq && ok "jq disponível" || { pkg_install jq 2>/dev/null || info "jq não instalado (opcional)"; }
     
     echo ""
-    if [ "$all_ok" = false ]; then
-        print_error "Alguns pré-requisitos não foram atendidos."
-        print_info "Tente abrir um novo terminal e executar novamente."
-        print_info "Ou instale manualmente os pacotes que falharam."
+    if [[ "$all_ok" == "false" ]]; then
+        err "Alguns requisitos falharam. Corrija e execute novamente."
         exit 1
     fi
-    
-    print_success "Todos os pré-requisitos verificados!"
+    ok "Todos os pré-requisitos OK!"
 }
 
 #-------------------------------------------------------------------------------
-# FUNÇÕES DE SETUP
+# CONFIGURAÇÃO DE AMBIENTE
 #-------------------------------------------------------------------------------
 
-setup_environment_files() {
-    print_section "2. CONFIGURANDO ARQUIVOS DE AMBIENTE"
+setup_env_files() {
+    section "⚙️  CONFIGURANDO ARQUIVOS DE AMBIENTE"
     
-    # Backend .env
-    print_step "2.1" "Configurando backend/.env..."
-    if [ ! -f "$BACKEND_DIR/.env" ]; then
-        if [ -f "$BACKEND_DIR/.env.example" ]; then
-            cp "$BACKEND_DIR/.env.example" "$BACKEND_DIR/.env"
-            print_success "Arquivo .env criado a partir do .env.example"
+    explain "Arquivos .env contêm configurações locais (senhas, URLs, etc.)"
+    explain "Eles NÃO são commitados no git por segurança."
+    echo ""
+    
+    # Backend
+    step "1" "Backend (.env)"
+    if [[ ! -f "$BACKEND/.env" ]]; then
+        if [[ -f "$BACKEND/.env.example" ]]; then
+            cp "$BACKEND/.env.example" "$BACKEND/.env"
+            ok "Copiado de .env.example"
         else
-            cat > "$BACKEND_DIR/.env" << 'EOF'
-# Database
+            cat > "$BACKEND/.env" << 'EOF'
+# === Banco de Dados ===
 DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/crm_juridico
 
-# Security
+# === Segurança ===
 SECRET_KEY=dev-secret-key-change-in-production-minimum-32-chars
-ALGORITHM=HS256
 ACCESS_TOKEN_EXPIRE_MINUTES=1440
 
-# Environment
+# === Ambiente ===
 ENVIRONMENT=development
 DEBUG=true
-LOG_LEVEL=DEBUG
 
-# Redis
+# === Redis (cache/filas) ===
 REDIS_URL=redis://localhost:6379/0
 
-# GCP (opcional para desenvolvimento)
+# === GCP (opcional em dev) ===
 GCP_PROJECT_ID=
-GCS_BUCKET_DOCUMENTOS=
-GOOGLE_APPLICATION_CREDENTIALS=
-
-# Gemini AI (opcional)
 GEMINI_API_KEY=
-GEMINI_MODEL=gemini-1.5-pro
-
-# Firebase (opcional)
-FIREBASE_PROJECT_ID=
-FIREBASE_CREDENTIALS_PATH=
 EOF
-            print_success "Arquivo .env criado com configurações padrão"
+            ok "Arquivo .env criado com valores padrão"
         fi
+        explain "Edite backend/.env para adicionar chaves de API se necessário"
     else
-        print_info "Arquivo .env já existe"
+        info "backend/.env já existe"
     fi
     
-    # Frontend .env
-    print_step "2.2" "Configurando frontend/.env..."
-    if [ ! -f "$FRONTEND_DIR/.env" ]; then
-        if [ -f "$FRONTEND_DIR/.env.example" ]; then
-            cp "$FRONTEND_DIR/.env.example" "$FRONTEND_DIR/.env"
-            print_success "Arquivo .env criado a partir do .env.example"
+    # Frontend
+    step "2" "Frontend (.env)"
+    if [[ ! -f "$FRONTEND/.env" ]]; then
+        if [[ -f "$FRONTEND/.env.example" ]]; then
+            cp "$FRONTEND/.env.example" "$FRONTEND/.env"
+            ok "Copiado de .env.example"
         else
-            cat > "$FRONTEND_DIR/.env" << 'EOF'
+            cat > "$FRONTEND/.env" << 'EOF'
 VITE_API_URL=http://localhost:8000
-VITE_FIREBASE_API_KEY=
-VITE_FIREBASE_AUTH_DOMAIN=
-VITE_FIREBASE_PROJECT_ID=
-VITE_FIREBASE_STORAGE_BUCKET=
-VITE_FIREBASE_MESSAGING_SENDER_ID=
-VITE_FIREBASE_APP_ID=
 EOF
-            print_success "Arquivo .env criado com configurações padrão"
+            ok "Arquivo .env criado"
         fi
     else
-        print_info "Arquivo .env já existe"
+        info "frontend/.env já existe"
     fi
 }
 
-start_infrastructure() {
-    print_section "3. INICIANDO INFRAESTRUTURA (Docker)"
+#-------------------------------------------------------------------------------
+# INFRAESTRUTURA (Docker)
+#-------------------------------------------------------------------------------
+
+start_infra() {
+    section "🐳 INICIANDO INFRAESTRUTURA"
     
-    cd "$PROJECT_ROOT"
+    explain "PostgreSQL: Banco de dados relacional com pgvector (IA)"
+    explain "Redis: Cache e filas de tarefas assíncronas"
+    echo ""
     
-    # Parar containers existentes
-    print_step "3.1" "Parando containers existentes..."
-    docker compose down --remove-orphans >> "$LOG_FILE" 2>&1 || true
-    print_success "Containers parados"
+    cd "$ROOT"
     
-    # Iniciar PostgreSQL e Redis
-    print_step "3.2" "Iniciando PostgreSQL e Redis..."
-    print_waiting "Aguardando containers subirem..."
-    docker compose up -d db redis >> "$LOG_FILE" 2>&1
-    print_done
+    step "1" "Parando containers anteriores"
+    docker compose down --remove-orphans >> "$LOG" 2>&1 || true
+    ok "Containers parados"
     
-    # Aguardar PostgreSQL estar pronto
-    print_step "3.3" "Aguardando PostgreSQL estar pronto..."
-    local max_attempts=30
-    local attempt=0
-    while [ $attempt -lt $max_attempts ]; do
-        if docker compose exec -T db pg_isready -U postgres >> "$LOG_FILE" 2>&1; then
-            print_success "PostgreSQL está pronto!"
+    step "2" "Iniciando PostgreSQL + Redis"
+    wait_msg "Subindo containers"
+    docker compose up -d db redis >> "$LOG" 2>&1
+    done_msg
+    
+    step "3" "Aguardando PostgreSQL"
+    local attempts=0
+    while [[ $attempts -lt 30 ]]; do
+        if docker compose exec -T db pg_isready -U postgres >> "$LOG" 2>&1; then
+            ok "PostgreSQL pronto!"
             break
         fi
-        attempt=$((attempt + 1))
+        attempts=$((attempts + 1))
         sleep 1
-        echo -ne "${YELLOW}  ⏳${NC} Tentativa $attempt/$max_attempts...\r"
     done
+    [[ $attempts -eq 30 ]] && { err "PostgreSQL timeout"; exit 1; }
     
-    if [ $attempt -eq $max_attempts ]; then
-        print_error "PostgreSQL não iniciou a tempo"
-        exit 1
-    fi
+    step "4" "Configurando extensões PostgreSQL"
+    explain "vector: Embeddings de IA | uuid-ossp: IDs únicos | pg_trgm: Busca textual"
+    for ext in "vector" "\"uuid-ossp\"" "pg_trgm"; do
+        docker compose exec -T db psql -U postgres -d crm_juridico \
+            -c "CREATE EXTENSION IF NOT EXISTS $ext;" >> "$LOG" 2>&1 || true
+    done
+    ok "Extensões configuradas"
     
-    # Criar extensões PostgreSQL
-    print_step "3.4" "Configurando extensões PostgreSQL..."
-    docker compose exec -T db psql -U postgres -d crm_juridico -c "CREATE EXTENSION IF NOT EXISTS vector;" >> "$LOG_FILE" 2>&1 || true
-    docker compose exec -T db psql -U postgres -d crm_juridico -c "CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\";" >> "$LOG_FILE" 2>&1 || true
-    docker compose exec -T db psql -U postgres -d crm_juridico -c "CREATE EXTENSION IF NOT EXISTS pg_trgm;" >> "$LOG_FILE" 2>&1 || true
-    print_success "Extensões configuradas (vector, uuid-ossp, pg_trgm)"
+    step "5" "Criando banco de testes"
+    docker compose exec -T db psql -U postgres -c "DROP DATABASE IF EXISTS test_db;" >> "$LOG" 2>&1 || true
+    docker compose exec -T db psql -U postgres -c "CREATE DATABASE test_db;" >> "$LOG" 2>&1
+    for ext in "vector" "\"uuid-ossp\"" "pg_trgm"; do
+        docker compose exec -T db psql -U postgres -d test_db \
+            -c "CREATE EXTENSION IF NOT EXISTS $ext;" >> "$LOG" 2>&1 || true
+    done
+    ok "Banco test_db criado"
     
-    # Criar banco de testes
-    print_step "3.5" "Criando banco de dados de testes..."
-    docker compose exec -T db psql -U postgres -c "DROP DATABASE IF EXISTS test_db;" >> "$LOG_FILE" 2>&1 || true
-    docker compose exec -T db psql -U postgres -c "CREATE DATABASE test_db;" >> "$LOG_FILE" 2>&1
-    docker compose exec -T db psql -U postgres -d test_db -c "CREATE EXTENSION IF NOT EXISTS vector;" >> "$LOG_FILE" 2>&1 || true
-    docker compose exec -T db psql -U postgres -d test_db -c "CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\";" >> "$LOG_FILE" 2>&1 || true
-    docker compose exec -T db psql -U postgres -d test_db -c "CREATE EXTENSION IF NOT EXISTS pg_trgm;" >> "$LOG_FILE" 2>&1 || true
-    print_success "Banco de testes criado com extensões"
-    
-    # Verificar Redis
-    print_step "3.6" "Verificando Redis..."
-    if docker compose exec -T redis redis-cli ping >> "$LOG_FILE" 2>&1; then
-        print_success "Redis está pronto!"
+    step "6" "Verificando Redis"
+    if docker compose exec -T redis redis-cli ping >> "$LOG" 2>&1; then
+        ok "Redis respondendo"
     else
-        print_error "Redis não respondeu"
+        err "Redis não respondeu"
         exit 1
     fi
 }
+
+#-------------------------------------------------------------------------------
+# BACKEND
+#-------------------------------------------------------------------------------
 
 setup_backend() {
-    print_section "4. CONFIGURANDO BACKEND (Python/FastAPI)"
+    section "🐍 CONFIGURANDO BACKEND"
     
-    cd "$BACKEND_DIR"
-    
-    # Instalar dependências
-    print_step "4.1" "Instalando dependências Python..."
-    print_waiting "Executando poetry install..."
-    poetry install >> "$LOG_FILE" 2>&1
-    print_done
-    print_success "Dependências instaladas"
-    
-    # Rodar migrations
-    print_step "4.2" "Aplicando migrations do banco de dados..."
-    poetry run alembic upgrade head >> "$LOG_FILE" 2>&1
-    print_success "Migrations aplicadas"
-    
-    # Rodar testes
-    print_step "4.3" "Executando testes unitários..."
+    explain "FastAPI + SQLAlchemy assíncrono + Pydantic v2"
+    explain "Especializado em Direito Previdenciário (INSS)"
     echo ""
-    if poetry run pytest -v --tb=short 2>&1 | tee -a "$LOG_FILE" | grep -E "^(tests/|PASSED|FAILED|ERROR|=====)"; then
-        echo ""
-        print_success "Testes executados"
-    else
-        echo ""
-        print_warning "Alguns testes podem ter falhado. Verifique o log."
-    fi
+    
+    cd "$BACKEND"
+    
+    step "1" "Instalando dependências Python"
+    explain "Poetry gerencia virtualenv e pacotes automaticamente"
+    wait_msg "poetry install"
+    poetry install >> "$LOG" 2>&1
+    done_msg
+    ok "Dependências instaladas"
+    
+    step "2" "Aplicando migrations"
+    explain "Alembic cria/atualiza tabelas no PostgreSQL"
+    poetry run alembic upgrade head >> "$LOG" 2>&1
+    ok "Banco de dados atualizado"
+    
+    step "3" "Executando testes"
+    explain "Pytest valida se o código está funcionando"
+    echo ""
+    poetry run pytest -v --tb=short 2>&1 | grep -E "(PASSED|FAILED|ERROR|tests/|=====)" || true
+    echo ""
+    ok "Testes executados"
 }
+
+#-------------------------------------------------------------------------------
+# FRONTEND
+#-------------------------------------------------------------------------------
 
 setup_frontend() {
-    print_section "5. CONFIGURANDO FRONTEND (React/TypeScript)"
+    section "⚛️  CONFIGURANDO FRONTEND"
     
-    cd "$FRONTEND_DIR"
+    explain "React 18 + TypeScript + Vite + TailwindCSS"
+    explain "Interface moderna para gestão de processos"
+    echo ""
     
-    # Instalar dependências
-    print_step "5.1" "Instalando dependências Node.js..."
-    print_waiting "Executando npm install..."
-    npm install >> "$LOG_FILE" 2>&1
-    print_done
-    print_success "Dependências instaladas"
+    cd "$FRONTEND"
     
-    # Build para verificar erros de TypeScript
-    print_step "5.2" "Verificando build de produção..."
-    if npm run build >> "$LOG_FILE" 2>&1; then
-        print_success "Build de produção OK"
+    step "1" "Instalando dependências Node.js"
+    wait_msg "npm install"
+    npm install >> "$LOG" 2>&1
+    done_msg
+    ok "Dependências instaladas"
+    
+    step "2" "Verificando build"
+    explain "Compila TypeScript e verifica erros"
+    if npm run build >> "$LOG" 2>&1; then
+        ok "Build OK (sem erros TypeScript)"
     else
-        print_warning "Build com warnings (verifique o log)"
+        warn "Build com warnings (verifique o log)"
     fi
 }
 
-check_port_available() {
+#-------------------------------------------------------------------------------
+# SERVIÇOS
+#-------------------------------------------------------------------------------
+
+check_port() {
     local port=$1
-    if command -v lsof &> /dev/null; then
-        ! lsof -i :$port &> /dev/null
-    elif command -v netstat &> /dev/null; then
-        ! netstat -tuln | grep -q ":$port "
+    if has lsof; then
+        ! lsof -i :"$port" &>/dev/null
     else
-        # Assume disponível se não puder verificar
         return 0
     fi
 }
 
 start_services() {
-    print_section "6. INICIANDO SERVIÇOS"
+    section "🚀 INICIANDO SERVIÇOS"
     
-    # Matar processos anteriores
-    print_step "6.0" "Parando processos anteriores..."
+    explain "Backend: API REST em http://localhost:${PORTS[backend]}"
+    explain "Frontend: Interface em http://localhost:${PORTS[frontend]}"
+    echo ""
+    
+    # Parar anteriores
+    step "1" "Limpando processos anteriores"
     pkill -f "uvicorn app.main:app" 2>/dev/null || true
     pkill -f "vite" 2>/dev/null || true
     sleep 2
-    print_success "Processos anteriores finalizados"
+    ok "Processos finalizados"
     
     # Verificar portas
-    print_step "6.1" "Verificando disponibilidade de portas..."
-    local ports_ok=true
-    
-    if ! check_port_available $PORT_BACKEND; then
-        print_error "Porta $PORT_BACKEND (Backend) já está em uso!"
-        print_info "Execute: lsof -i :$PORT_BACKEND  ou  kill \$(lsof -t -i:$PORT_BACKEND)"
-        ports_ok=false
-    fi
-    
-    if ! check_port_available $PORT_FRONTEND; then
-        print_error "Porta $PORT_FRONTEND (Frontend) já está em uso!"
-        print_info "Execute: lsof -i :$PORT_FRONTEND  ou  kill \$(lsof -t -i:$PORT_FRONTEND)"
-        ports_ok=false
-    fi
-    
-    if [ "$ports_ok" = false ]; then
-        print_error "Libere as portas e execute novamente"
-        return 1
-    fi
-    print_success "Portas disponíveis"
-    
-    # Iniciar Backend
-    print_step "6.2" "Iniciando API Backend (porta $PORT_BACKEND)..."
-    cd "$BACKEND_DIR"
-    nohup poetry run uvicorn app.main:app --host 0.0.0.0 --port $PORT_BACKEND --reload >> "$PROJECT_ROOT/.backend.log" 2>&1 &
-    local backend_pid=$!
-    sleep 3
-    
-    if kill -0 $backend_pid 2>/dev/null; then
-        print_success "Backend iniciado (PID: $backend_pid)"
-    else
-        print_error "Falha ao iniciar backend. Verifique .backend.log"
-        print_info "Comando: tail -50 $PROJECT_ROOT/.backend.log"
-    fi
-    
-    # Iniciar Frontend
-    print_step "6.3" "Iniciando Frontend (porta $PORT_FRONTEND)..."
-    cd "$FRONTEND_DIR"
-    nohup npm run dev >> "$PROJECT_ROOT/.frontend.log" 2>&1 &
-    local frontend_pid=$!
-    sleep 3
-    
-    if kill -0 $frontend_pid 2>/dev/null; then
-        print_success "Frontend iniciado (PID: $frontend_pid)"
-    else
-        print_error "Falha ao iniciar frontend. Verifique .frontend.log"
-        print_info "Comando: tail -50 $PROJECT_ROOT/.frontend.log"
-    fi
-    
-    # Aguardar serviços
-    print_step "6.4" "Aguardando serviços estarem prontos..."
-    sleep 5
-}
-
-test_api_endpoints() {
-    print_section "7. TESTANDO ENDPOINTS DA API"
-    
-    local api_url="http://localhost:$PORT_BACKEND"
-    
-    # Health check
-    print_step "7.1" "Testando Health Check..."
-    local health_response=$(curl -s "$api_url/health" 2>/dev/null)
-    if echo "$health_response" | grep -q "healthy"; then
-        print_success "Health Check: OK"
-        print_substep "Response: $health_response"
-    else
-        print_error "Health Check falhou"
-        return 1
-    fi
-    
-    # OpenAPI docs
-    print_step "7.2" "Verificando documentação OpenAPI..."
-    local docs_status=$(curl -s -o /dev/null -w "%{http_code}" "$api_url/openapi.json" 2>/dev/null)
-    if [ "$docs_status" = "200" ]; then
-        print_success "OpenAPI disponível"
-    else
-        print_info "OpenAPI desabilitado (modo produção)"
-    fi
-    
-    # Testar onboarding
-    print_step "7.3" "Testando endpoint de Onboarding..."
-    # CNPJ válido para testes: 11222333000181 (dígitos verificadores corretos)
-    local onboarding_response=$(curl -s -X POST "$api_url/api/v1/auth/onboarding" \
-        -H "Content-Type: application/json" \
-        -d '{
-            "escritorio_nome": "Advocacia Teste Dev",
-            "escritorio_cnpj": "11222333000181",
-            "escritorio_email": "teste@devtest.com",
-            "usuario_nome": "Admin Dev",
-            "usuario_email": "admin@devtest.com",
-            "usuario_password": "DevTest@123"
-        }' 2>/dev/null)
-    
-    if echo "$onboarding_response" | grep -q "success.*true"; then
-        print_success "Onboarding: OK"
-        
-        # Extrair token
-        local token=$(echo "$onboarding_response" | grep -o '"access_token":"[^"]*"' | cut -d'"' -f4)
-        
-        if [ -n "$token" ]; then
-            # Testar endpoint autenticado
-            print_step "7.4" "Testando endpoint autenticado (/me)..."
-            local me_response=$(curl -s "$api_url/api/v1/auth/me" \
-                -H "Authorization: Bearer $token" 2>/dev/null)
-            
-            if echo "$me_response" | grep -q "admin@devtest.com"; then
-                print_success "Autenticação: OK"
-            else
-                print_warning "Autenticação com problemas"
-            fi
-            
-            # Testar criar cliente
-            print_step "7.5" "Testando criar cliente..."
-            # CPF válido para testes: 52998224725 (dígitos verificadores corretos)
-            local cliente_response=$(curl -s -X POST "$api_url/api/v1/clientes" \
-                -H "Authorization: Bearer $token" \
-                -H "Content-Type: application/json" \
-                -d '{
-                    "tipo_pessoa": "fisica",
-                    "nome": "Cliente Teste Dev",
-                    "cpf": "52998224725",
-                    "email": "cliente@teste.dev",
-                    "telefone": "11999999999",
-                    "consentimento_lgpd": true
-                }' 2>/dev/null)
-            
-            if echo "$cliente_response" | grep -q "success.*true"; then
-                print_success "Criar cliente: OK"
-            else
-                print_warning "Criar cliente com problemas"
-            fi
+    step "2" "Verificando portas"
+    for svc in backend frontend; do
+        if ! check_port "${PORTS[$svc]}"; then
+            err "Porta ${PORTS[$svc]} ($svc) em uso!"
+            info "Execute: kill \$(lsof -t -i:${PORTS[$svc]})"
+            return 1
         fi
-    else
-        print_info "Onboarding já executado anteriormente ou com erro"
-    fi
-}
-
-print_summary() {
-    print_section "8. RESUMO DA CONFIGURAÇÃO"
-    
-    echo -e "${WHITE}  ┌────────────────────────────────────────────────────────────────────────┐${NC}"
-    echo -e "${WHITE}  │                         RESULTADO DA CONFIGURAÇÃO                      │${NC}"
-    echo -e "${WHITE}  ├────────────────────────────────────────────────────────────────────────┤${NC}"
-    echo -e "${WHITE}  │${NC}  ${GREEN}✓ Sucessos:${NC} $STEPS_PASSED                                                      ${WHITE}│${NC}"
-    echo -e "${WHITE}  │${NC}  ${RED}✗ Falhas:${NC}   $STEPS_FAILED                                                        ${WHITE}│${NC}"
-    echo -e "${WHITE}  │${NC}  ${YELLOW}⚠ Avisos:${NC}   $WARNINGS                                                         ${WHITE}│${NC}"
-    echo -e "${WHITE}  └────────────────────────────────────────────────────────────────────────┘${NC}"
-    
-    echo ""
-    echo -e "${CYAN}  ┌────────────────────────────────────────────────────────────────────────┐${NC}"
-    echo -e "${CYAN}  │                              SERVIÇOS ATIVOS                           │${NC}"
-    echo -e "${CYAN}  ├────────────────────────────────────────────────────────────────────────┤${NC}"
-    echo -e "${CYAN}  │${NC}  🗄️  PostgreSQL:     ${GREEN}localhost:$PORT_POSTGRES${NC}                                   ${CYAN}│${NC}"
-    echo -e "${CYAN}  │${NC}  📦 Redis:          ${GREEN}localhost:$PORT_REDIS${NC}                                   ${CYAN}│${NC}"
-    echo -e "${CYAN}  │${NC}  🚀 API Backend:    ${GREEN}http://localhost:$PORT_BACKEND${NC}                            ${CYAN}│${NC}"
-    echo -e "${CYAN}  │${NC}  📚 API Docs:       ${GREEN}http://localhost:$PORT_BACKEND/docs${NC}                       ${CYAN}│${NC}"
-    echo -e "${CYAN}  │${NC}  🎨 Frontend:       ${GREEN}http://localhost:$PORT_FRONTEND${NC}                            ${CYAN}│${NC}"
-    echo -e "${CYAN}  └────────────────────────────────────────────────────────────────────────┘${NC}"
-    
-    echo ""
-    echo -e "${PURPLE}  ┌────────────────────────────────────────────────────────────────────────┐${NC}"
-    echo -e "${PURPLE}  │                           COMANDOS ÚTEIS                               │${NC}"
-    echo -e "${PURPLE}  ├────────────────────────────────────────────────────────────────────────┤${NC}"
-    echo -e "${PURPLE}  │${NC}  ${DIM}# Ver logs do backend${NC}                                                  ${PURPLE}│${NC}"
-    echo -e "${PURPLE}  │${NC}  tail -f .backend.log                                                   ${PURPLE}│${NC}"
-    echo -e "${PURPLE}  │${NC}                                                                         ${PURPLE}│${NC}"
-    echo -e "${PURPLE}  │${NC}  ${DIM}# Ver logs do frontend${NC}                                                 ${PURPLE}│${NC}"
-    echo -e "${PURPLE}  │${NC}  tail -f .frontend.log                                                  ${PURPLE}│${NC}"
-    echo -e "${PURPLE}  │${NC}                                                                         ${PURPLE}│${NC}"
-    echo -e "${PURPLE}  │${NC}  ${DIM}# Rodar testes do backend${NC}                                              ${PURPLE}│${NC}"
-    echo -e "${PURPLE}  │${NC}  cd backend && poetry run pytest -v                                     ${PURPLE}│${NC}"
-    echo -e "${PURPLE}  │${NC}                                                                         ${PURPLE}│${NC}"
-    echo -e "${PURPLE}  │${NC}  ${DIM}# Parar tudo${NC}                                                            ${PURPLE}│${NC}"
-    echo -e "${PURPLE}  │${NC}  docker compose down && pkill -f uvicorn && pkill -f vite               ${PURPLE}│${NC}"
-    echo -e "${PURPLE}  └────────────────────────────────────────────────────────────────────────┘${NC}"
-    
-    echo ""
-    echo -e "${GREEN}  ════════════════════════════════════════════════════════════════════════${NC}"
-    echo -e "${GREEN}    ✅ Ambiente de desenvolvimento configurado com sucesso!${NC}"
-    echo -e "${GREEN}  ════════════════════════════════════════════════════════════════════════${NC}"
-    echo ""
-    echo -e "${DIM}  Log completo disponível em: $LOG_FILE${NC}"
-    echo ""
-}
-
-show_help() {
-    echo "Uso: $0 [OPÇÃO]"
-    echo ""
-    echo "Opções:"
-    echo "  --help, -h      Mostra esta ajuda"
-    echo "  --auto, -y      Execução automática sem prompts (instala tudo)"
-    echo "  --full          Execução completa com lint, types e cobertura"
-    echo "  --check         Apenas verifica pré-requisitos"
-    echo "  --infra         Apenas inicia infraestrutura (DB + Redis)"
-    echo "  --backend       Apenas configura backend"
-    echo "  --frontend      Apenas configura frontend"
-    echo "  --test          Apenas testa endpoints"
-    echo "  --stop          Para todos os serviços"
-    echo "  --clean         Para e remove todos os dados"
-    echo "  --status        Mostra status dos serviços"
-    echo ""
-    echo "Sem argumentos: executa configuração completa (interativo)"
-    echo ""
-    echo "Exemplos:"
-    echo "  $0              # Interativo, pede confirmação"
-    echo "  $0 --auto       # Automático, instala tudo sem perguntar"
-    echo "  $0 --full       # Completo com lint, types e cobertura"
-    echo "  $0 --check      # Apenas verifica (e instala) dependências"
-    echo "  $0 --status     # Verifica se serviços estão rodando"
-}
-
-stop_services() {
-    print_section "PARANDO SERVIÇOS"
-    
-    print_step "1" "Parando processos..."
-    pkill -f "uvicorn app.main:app" 2>/dev/null || true
-    pkill -f "vite" 2>/dev/null || true
-    print_success "Processos parados"
-    
-    print_step "2" "Parando containers..."
-    cd "$PROJECT_ROOT"
-    docker compose down >> "$LOG_FILE" 2>&1 || true
-    print_success "Containers parados"
-    
-    echo ""
-    print_success "Todos os serviços foram parados!"
-}
-
-clean_all() {
-    print_section "LIMPANDO AMBIENTE"
-    
-    stop_services
-    
-    print_step "3" "Removendo volumes Docker..."
-    docker compose down -v >> "$LOG_FILE" 2>&1 || true
-    print_success "Volumes removidos"
-    
-    print_step "4" "Removendo arquivos de log..."
-    rm -f "$PROJECT_ROOT/.backend.log" "$PROJECT_ROOT/.frontend.log" "$LOG_FILE"
-    print_success "Logs removidos"
-    
-    echo ""
-    print_success "Ambiente limpo!"
-}
-
-show_status() {
-    print_section "STATUS DOS SERVIÇOS"
-    
-    echo ""
-    
-    # PostgreSQL
-    print_step "1" "PostgreSQL (porta $PORT_POSTGRES)..."
-    if docker compose ps 2>/dev/null | grep -q "crm_juridico_db.*Up"; then
-        print_success "PostgreSQL está rodando"
-    else
-        print_error "PostgreSQL não está rodando"
-    fi
-    
-    # Redis
-    print_step "2" "Redis (porta $PORT_REDIS)..."
-    if docker compose ps 2>/dev/null | grep -q "crm_juridico_redis.*Up"; then
-        print_success "Redis está rodando"
-    else
-        print_error "Redis não está rodando"
-    fi
+    done
+    ok "Portas disponíveis"
     
     # Backend
-    print_step "3" "Backend API (porta $PORT_BACKEND)..."
-    if curl -s "http://localhost:$PORT_BACKEND/health" 2>/dev/null | grep -q "healthy"; then
-        print_success "Backend está respondendo"
-    elif pgrep -f "uvicorn app.main:app" > /dev/null 2>&1; then
-        print_warning "Backend está rodando mas não respondendo"
+    step "3" "Iniciando Backend (porta ${PORTS[backend]})"
+    cd "$BACKEND"
+    nohup poetry run uvicorn app.main:app --host 0.0.0.0 --port "${PORTS[backend]}" --reload >> "$ROOT/.backend.log" 2>&1 &
+    sleep 3
+    if pgrep -f "uvicorn app.main:app" >/dev/null; then
+        ok "Backend rodando"
     else
-        print_error "Backend não está rodando"
+        err "Falha ao iniciar. Veja: tail -50 $ROOT/.backend.log"
     fi
     
     # Frontend
-    print_step "4" "Frontend (porta $PORT_FRONTEND)..."
-    if curl -s "http://localhost:$PORT_FRONTEND" > /dev/null 2>&1; then
-        print_success "Frontend está respondendo"
-    elif pgrep -f "vite" > /dev/null 2>&1; then
-        print_warning "Frontend está rodando mas não respondendo"
+    step "4" "Iniciando Frontend (porta ${PORTS[frontend]})"
+    cd "$FRONTEND"
+    nohup npm run dev >> "$ROOT/.frontend.log" 2>&1 &
+    sleep 3
+    if pgrep -f "vite" >/dev/null; then
+        ok "Frontend rodando"
     else
-        print_error "Frontend não está rodando"
+        err "Falha ao iniciar. Veja: tail -50 $ROOT/.frontend.log"
+    fi
+}
+
+#-------------------------------------------------------------------------------
+# TESTES DE API
+#-------------------------------------------------------------------------------
+
+test_api() {
+    section "🧪 TESTANDO API"
+    
+    local url="http://localhost:${PORTS[backend]}"
+    
+    step "1" "Health Check"
+    explain "Verifica se a API está respondendo"
+    local health=$(curl -s "$url/health" 2>/dev/null)
+    if echo "$health" | grep -q "healthy"; then
+        ok "API saudável"
+    else
+        err "API não respondeu"
+        return 1
+    fi
+    
+    step "2" "Documentação OpenAPI"
+    explain "Swagger UI para testar endpoints"
+    if curl -s -o /dev/null -w "%{http_code}" "$url/docs" 2>/dev/null | grep -q "200"; then
+        ok "Docs disponíveis em $url/docs"
+    else
+        info "Docs podem estar desabilitados"
+    fi
+    
+    step "3" "Teste de Onboarding"
+    explain "Cria escritório + usuário admin de teste"
+    local response=$(curl -s -X POST "$url/api/v1/auth/onboarding" \
+        -H "Content-Type: application/json" \
+        -d '{"escritorio_nome":"Teste Dev","escritorio_cnpj":"11222333000181","escritorio_email":"teste@dev.com","usuario_nome":"Admin","usuario_email":"admin@dev.com","usuario_password":"Test@123"}' 2>/dev/null)
+    
+    if echo "$response" | grep -q "success.*true"; then
+        ok "Onboarding OK"
+        
+        local token=$(echo "$response" | grep -o '"access_token":"[^"]*"' | cut -d'"' -f4)
+        if [[ -n "$token" ]]; then
+            step "4" "Endpoint autenticado (/me)"
+            if curl -s "$url/api/v1/auth/me" -H "Authorization: Bearer $token" | grep -q "admin@dev.com"; then
+                ok "Autenticação funcionando"
+            fi
+        fi
+    else
+        info "Onboarding já executado ou com erro"
+    fi
+}
+
+#-------------------------------------------------------------------------------
+# STATUS
+#-------------------------------------------------------------------------------
+
+show_status() {
+    section "📊 STATUS DOS SERVIÇOS"
+    
+    cd "$ROOT"
+    
+    # PostgreSQL
+    step "1" "PostgreSQL (${PORTS[postgres]})"
+    if docker compose ps 2>/dev/null | grep -q "crm_juridico_db.*Up"; then
+        ok "Rodando"
+    else
+        err "Parado"
+    fi
+    
+    # Redis
+    step "2" "Redis (${PORTS[redis]})"
+    if docker compose ps 2>/dev/null | grep -q "crm_juridico_redis.*Up"; then
+        ok "Rodando"
+    else
+        err "Parado"
+    fi
+    
+    # Backend
+    step "3" "Backend API (${PORTS[backend]})"
+    if curl -s "http://localhost:${PORTS[backend]}/health" 2>/dev/null | grep -q "healthy"; then
+        ok "Respondendo"
+    elif pgrep -f "uvicorn app.main:app" >/dev/null; then
+        warn "Processo ativo mas não responde"
+    else
+        err "Parado"
+    fi
+    
+    # Frontend
+    step "4" "Frontend (${PORTS[frontend]})"
+    if curl -s "http://localhost:${PORTS[frontend]}" >/dev/null 2>&1; then
+        ok "Respondendo"
+    elif pgrep -f "vite" >/dev/null; then
+        warn "Processo ativo mas não responde"
+    else
+        err "Parado"
     fi
     
     echo ""
-    echo -e "${CYAN}  ┌────────────────────────────────────────────────────────────────────────┐${NC}"
-    echo -e "${CYAN}  │                              URLS DOS SERVIÇOS                         │${NC}"
-    echo -e "${CYAN}  ├────────────────────────────────────────────────────────────────────────┤${NC}"
-    echo -e "${CYAN}  │${NC}  🚀 API:      ${GREEN}http://localhost:$PORT_BACKEND${NC}                                  ${CYAN}│${NC}"
-    echo -e "${CYAN}  │${NC}  📚 Docs:     ${GREEN}http://localhost:$PORT_BACKEND/docs${NC}                             ${CYAN}│${NC}"
-    echo -e "${CYAN}  │${NC}  🎨 Frontend: ${GREEN}http://localhost:$PORT_FRONTEND${NC}                                  ${CYAN}│${NC}"
-    echo -e "${CYAN}  └────────────────────────────────────────────────────────────────────────┘${NC}"
+    echo -e "${C}  ┌─────────────────────────────────────────────────────────────┐${N}"
+    echo -e "${C}  │${N}  🚀 API:      ${G}http://localhost:${PORTS[backend]}${N}                     ${C}│${N}"
+    echo -e "${C}  │${N}  📚 Docs:     ${G}http://localhost:${PORTS[backend]}/docs${N}                ${C}│${N}"
+    echo -e "${C}  │${N}  🎨 Frontend: ${G}http://localhost:${PORTS[frontend]}${N}                     ${C}│${N}"
+    echo -e "${C}  └─────────────────────────────────────────────────────────────┘${N}"
+}
+
+#-------------------------------------------------------------------------------
+# TESTES COMPLETOS
+#-------------------------------------------------------------------------------
+
+run_full_tests() {
+    section "🔬 TESTES COMPLETOS (Lint + Types + Coverage)"
+    
+    explain "Executa todas as verificações de qualidade de código"
+    echo ""
+    
+    cd "$BACKEND"
+    local all_ok=true
+    
+    step "1" "Ruff (linter)"
+    explain "Verifica estilo e problemas no código"
+    if poetry run ruff check . >> "$LOG" 2>&1; then
+        ok "Sem problemas"
+    else
+        warn "Issues encontrados (veja log)"
+        all_ok=false
+    fi
+    
+    step "2" "MyPy (type checker)"
+    explain "Verifica tipos estáticos"
+    if poetry run mypy app --ignore-missing-imports >> "$LOG" 2>&1; then
+        ok "Tipos OK"
+    else
+        warn "Issues de tipos (veja log)"
+        all_ok=false
+    fi
+    
+    step "3" "Pytest + Coverage"
+    explain "Testes unitários com cobertura de código"
+    echo ""
+    poetry run pytest -v --cov=app --cov-report=term-missing 2>&1 | grep -E "(PASSED|FAILED|ERROR|TOTAL|tests/|=====)" || true
+    
+    local cov=$(poetry run coverage report 2>/dev/null | grep TOTAL | awk '{print $4}' | tr -d '%')
+    if [[ -n "$cov" ]]; then
+        if [[ "$cov" -ge 70 ]]; then
+            ok "Cobertura: ${cov}% ✓"
+        else
+            warn "Cobertura: ${cov}% (mínimo: 70%)"
+            all_ok=false
+        fi
+    fi
+    
+    step "4" "Frontend Build"
+    cd "$FRONTEND"
+    if npm run build >> "$LOG" 2>&1; then
+        ok "TypeScript sem erros"
+    else
+        warn "Build com problemas"
+        all_ok=false
+    fi
+    
+    echo ""
+    if [[ "$all_ok" == "true" ]]; then
+        echo -e "${G}  ════════════════════════════════════════════════════════════${N}"
+        echo -e "${G}    ✅ Tudo OK! Pronto para deploy.${N}"
+        echo -e "${G}  ════════════════════════════════════════════════════════════${N}"
+    else
+        echo -e "${Y}  ════════════════════════════════════════════════════════════${N}"
+        echo -e "${Y}    ⚠️  Alguns warnings. Revise antes do deploy.${N}"
+        echo -e "${Y}  ════════════════════════════════════════════════════════════${N}"
+    fi
+}
+
+#-------------------------------------------------------------------------------
+# PARAR / LIMPAR
+#-------------------------------------------------------------------------------
+
+stop_all() {
+    section "🛑 PARANDO SERVIÇOS"
+    
+    step "1" "Parando processos"
+    pkill -f "uvicorn app.main:app" 2>/dev/null || true
+    pkill -f "vite" 2>/dev/null || true
+    ok "Processos finalizados"
+    
+    step "2" "Parando containers"
+    cd "$ROOT"
+    docker compose down >> "$LOG" 2>&1 || true
+    ok "Containers parados"
+    
+    echo ""
+    ok "Tudo parado!"
+}
+
+clean_all() {
+    section "🧹 LIMPANDO AMBIENTE"
+    
+    stop_all
+    
+    step "3" "Removendo volumes Docker"
+    explain "Isso apaga todos os dados do banco!"
+    docker compose down -v >> "$LOG" 2>&1 || true
+    ok "Volumes removidos"
+    
+    step "4" "Removendo logs"
+    rm -f "$ROOT/.backend.log" "$ROOT/.frontend.log" "$LOG"
+    ok "Logs removidos"
+    
+    echo ""
+    ok "Ambiente limpo!"
+}
+
+#-------------------------------------------------------------------------------
+# RESUMO FINAL
+#-------------------------------------------------------------------------------
+
+print_summary() {
+    section "✅ CONFIGURAÇÃO CONCLUÍDA"
+    
+    echo -e "${C}  ┌─────────────────────────────────────────────────────────────┐${N}"
+    echo -e "${C}  │${N}                    ${W}SERVIÇOS ATIVOS${N}                        ${C}│${N}"
+    echo -e "${C}  ├─────────────────────────────────────────────────────────────┤${N}"
+    echo -e "${C}  │${N}  🗄️  PostgreSQL:  ${G}localhost:${PORTS[postgres]}${N}                       ${C}│${N}"
+    echo -e "${C}  │${N}  📦 Redis:       ${G}localhost:${PORTS[redis]}${N}                       ${C}│${N}"
+    echo -e "${C}  │${N}  🚀 API:         ${G}http://localhost:${PORTS[backend]}${N}              ${C}│${N}"
+    echo -e "${C}  │${N}  📚 Docs:        ${G}http://localhost:${PORTS[backend]}/docs${N}         ${C}│${N}"
+    echo -e "${C}  │${N}  🎨 Frontend:    ${G}http://localhost:${PORTS[frontend]}${N}              ${C}│${N}"
+    echo -e "${C}  └─────────────────────────────────────────────────────────────┘${N}"
+    
+    echo ""
+    echo -e "${D}  Comandos úteis:${N}"
+    echo -e "${D}    tail -f .backend.log     # Logs do backend${N}"
+    echo -e "${D}    tail -f .frontend.log    # Logs do frontend${N}"
+    echo -e "${D}    ./scripts/dev-setup.sh --stop   # Parar tudo${N}"
     echo ""
 }
 
-run_full_tests() {
-    print_section "EXECUÇÃO COMPLETA (LINT + TYPES + TESTES + COBERTURA)"
-    
-    local all_passed=true
-    
-    cd "$BACKEND_DIR"
-    
-    # Lint com Ruff
-    print_step "1" "Executando Ruff (linter)..."
-    if poetry run ruff check . >> "$LOG_FILE" 2>&1; then
-        print_success "Ruff: Nenhum problema encontrado"
-    else
-        print_warning "Ruff: Alguns problemas encontrados (verifique log)"
-        all_passed=false
-    fi
-    
-    # Type checking com MyPy
-    print_step "2" "Executando MyPy (type checker)..."
-    if poetry run mypy app --ignore-missing-imports >> "$LOG_FILE" 2>&1; then
-        print_success "MyPy: Tipos OK"
-    else
-        print_warning "MyPy: Alguns problemas de tipos (verifique log)"
-        all_passed=false
-    fi
-    
-    # Testes com cobertura
-    print_step "3" "Executando testes com cobertura..."
+#-------------------------------------------------------------------------------
+# MENU INTERATIVO
+#-------------------------------------------------------------------------------
+
+show_menu() {
     echo ""
-    if poetry run pytest -v --cov=app --cov-report=term-missing --cov-report=html 2>&1 | tee -a "$LOG_FILE" | grep -E "^(tests/|PASSED|FAILED|ERROR|=====|TOTAL|Name)"; then
-        echo ""
-        print_success "Testes executados"
-    else
-        echo ""
-        print_error "Alguns testes falharam"
-        all_passed=false
-    fi
-    
-    # Verificar cobertura mínima
-    print_step "4" "Verificando cobertura mínima (70%)..."
-    local coverage=$(poetry run coverage report 2>/dev/null | grep TOTAL | awk '{print $4}' | tr -d '%')
-    if [ -n "$coverage" ] && [ "$coverage" -ge 70 ]; then
-        print_success "Cobertura: ${coverage}% (acima de 70%)"
-    elif [ -n "$coverage" ]; then
-        print_warning "Cobertura: ${coverage}% (abaixo de 70%)"
-        all_passed=false
-    else
-        print_info "Não foi possível verificar cobertura"
-    fi
-    
-    # Frontend lint
-    print_step "5" "Verificando Frontend (TypeScript)..."
-    cd "$FRONTEND_DIR"
-    if npm run build >> "$LOG_FILE" 2>&1; then
-        print_success "Frontend: Build OK (sem erros TypeScript)"
-    else
-        print_warning "Frontend: Build com problemas"
-        all_passed=false
-    fi
-    
+    echo -e "${W}  O que você deseja fazer?${N}"
     echo ""
-    if [ "$all_passed" = true ]; then
-        echo -e "${GREEN}  ════════════════════════════════════════════════════════════════════════${NC}"
-        echo -e "${GREEN}    ✅ Todos os testes passaram! Pronto para deploy.${NC}"
-        echo -e "${GREEN}  ════════════════════════════════════════════════════════════════════════${NC}"
-    else
-        echo -e "${YELLOW}  ════════════════════════════════════════════════════════════════════════${NC}"
-        echo -e "${YELLOW}    ⚠️  Alguns testes têm warnings. Revise antes do deploy.${NC}"
-        echo -e "${YELLOW}  ════════════════════════════════════════════════════════════════════════${NC}"
-    fi
+    echo -e "  ${C}1)${N} Setup completo (recomendado para primeira vez)"
+    echo -e "  ${C}2)${N} Apenas verificar pré-requisitos"
+    echo -e "  ${C}3)${N} Apenas iniciar infraestrutura (DB + Redis)"
+    echo -e "  ${C}4)${N} Apenas configurar backend"
+    echo -e "  ${C}5)${N} Apenas configurar frontend"
+    echo -e "  ${C}6)${N} Iniciar serviços (backend + frontend)"
+    echo -e "  ${C}7)${N} Ver status dos serviços"
+    echo -e "  ${C}8)${N} Rodar testes completos (lint + types + coverage)"
+    echo -e "  ${C}9)${N} Parar todos os serviços"
+    echo -e "  ${C}0)${N} Limpar ambiente (remove dados)"
+    echo -e "  ${C}q)${N} Sair"
     echo ""
-    print_info "Relatório de cobertura HTML: backend/htmlcov/index.html"
+    read -p "  Escolha [1-9, 0, q]: " choice
+    
+    case "$choice" in
+        1) run_full_setup ;;
+        2) check_prerequisites ;;
+        3) start_infra ;;
+        4) setup_backend ;;
+        5) setup_frontend ;;
+        6) start_services ;;
+        7) show_status ;;
+        8) run_full_tests ;;
+        9) stop_all ;;
+        0) clean_all ;;
+        q|Q) echo ""; info "Até logo!"; exit 0 ;;
+        *) warn "Opção inválida"; show_menu ;;
+    esac
+}
+
+run_full_setup() {
+    check_prerequisites
+    setup_env_files
+    start_infra
+    setup_backend
+    setup_frontend
+    start_services
+    test_api
+    print_summary
+}
+
+#-------------------------------------------------------------------------------
+# HELP
+#-------------------------------------------------------------------------------
+
+show_help() {
+    cat << EOF
+CRM Jurídico AI - Setup de Desenvolvimento
+
+Uso: $0 [comando]
+
+Comandos:
+  (nenhum)    Menu interativo
+  --auto      Setup completo automático
+  --full      Setup + testes completos (lint, types, coverage)
+  --check     Verificar pré-requisitos
+  --infra     Iniciar PostgreSQL + Redis
+  --backend   Configurar backend
+  --frontend  Configurar frontend
+  --start     Iniciar backend + frontend
+  --test      Testar endpoints da API
+  --status    Ver status dos serviços
+  --stop      Parar todos os serviços
+  --clean     Parar e remover dados
+  --help      Esta ajuda
+
+Exemplos:
+  $0              # Menu interativo
+  $0 --auto       # Setup completo sem interação
+  $0 --status     # Ver o que está rodando
+EOF
 }
 
 #-------------------------------------------------------------------------------
@@ -1112,110 +857,27 @@ run_full_tests() {
 #-------------------------------------------------------------------------------
 
 main() {
-    # Inicializar log
-    echo "=== Dev Setup Log - $(date) ===" > "$LOG_FILE"
+    echo "=== Dev Setup Log - $(date) ===" > "$LOG"
     
-    # Verificar estrutura do projeto (exceto para help)
-    if [ "${1:-}" != "--help" ] && [ "${1:-}" != "-h" ]; then
-        verify_project_structure
-    fi
+    # Verificar estrutura (exceto help)
+    [[ "${1:-}" != "--help" && "${1:-}" != "-h" ]] && check_structure
     
     case "${1:-}" in
-        --help|-h)
-            show_help
-            exit 0
-            ;;
-        --auto|-y)
-            # Modo automático - executa tudo sem prompts
-            AUTO_MODE=true
-            print_banner
-            check_prerequisites
-            setup_environment_files
-            start_infrastructure
-            setup_backend
-            setup_frontend
-            start_services
-            test_api_endpoints
-            print_summary
-            ;;
-        --check)
-            print_banner
-            check_prerequisites
-            ;;
-        --infra)
-            print_banner
-            start_infrastructure
-            ;;
-        --backend)
-            print_banner
-            setup_backend
-            ;;
-        --frontend)
-            print_banner
-            setup_frontend
-            ;;
-        --test)
-            print_banner
-            test_api_endpoints
-            ;;
-        --stop)
-            print_banner
-            stop_services
-            ;;
-        --clean)
-            print_banner
-            clean_all
-            ;;
-        --status)
-            print_banner
-            cd "$PROJECT_ROOT"
-            show_status
-            ;;
-        --full)
-            # Modo completo - lint, types, cobertura
-            FULL_MODE=true
-            print_banner
-            check_prerequisites
-            setup_environment_files
-            start_infrastructure
-            setup_backend
-            setup_frontend
-            run_full_tests
-            ;;
-        "")
-            # Execução completa interativa
-            print_banner
-            
-            echo -e "${WHITE}  Este script irá:${NC}"
-            echo -e "${DIM}    1. Verificar e instalar pré-requisitos (Docker, Python, Node.js, etc.)${NC}"
-            echo -e "${DIM}    2. Configurar arquivos de ambiente (.env)${NC}"
-            echo -e "${DIM}    3. Iniciar infraestrutura (PostgreSQL, Redis)${NC}"
-            echo -e "${DIM}    4. Configurar e testar backend (FastAPI)${NC}"
-            echo -e "${DIM}    5. Configurar e testar frontend (React)${NC}"
-            echo -e "${DIM}    6. Iniciar todos os serviços${NC}"
-            echo -e "${DIM}    7. Testar endpoints da API${NC}"
-            echo ""
-            echo -e "${CYAN}  💡 Dica: Use ${WHITE}--auto${CYAN} para execução sem prompts${NC}"
-            echo ""
-            
-            read -p "  Pressione ENTER para continuar ou CTRL+C para cancelar..."
-            
-            check_prerequisites
-            setup_environment_files
-            start_infrastructure
-            setup_backend
-            setup_frontend
-            start_services
-            test_api_endpoints
-            print_summary
-            ;;
-        *)
-            echo "Opção desconhecida: $1"
-            show_help
-            exit 1
-            ;;
+        --help|-h)   show_help ;;
+        --auto|-y)   banner; run_full_setup ;;
+        --full)      banner; run_full_setup; run_full_tests ;;
+        --check)     banner; check_prerequisites ;;
+        --infra)     banner; start_infra ;;
+        --backend)   banner; setup_backend ;;
+        --frontend)  banner; setup_frontend ;;
+        --start)     banner; start_services ;;
+        --test)      banner; test_api ;;
+        --status)    banner; show_status ;;
+        --stop)      banner; stop_all ;;
+        --clean)     banner; clean_all ;;
+        "")          banner; show_menu ;;
+        *)           echo "Comando desconhecido: $1"; show_help; exit 1 ;;
     esac
 }
 
-# Executar
 main "$@"
