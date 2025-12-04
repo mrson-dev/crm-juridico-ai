@@ -43,12 +43,19 @@ PYTHON_MIN_VERSION="3.11"
 NODE_MIN_VERSION="18"
 DOCKER_MIN_VERSION="20"
 
+# Portas dos serviços
+PORT_POSTGRES=5432
+PORT_REDIS=6379
+PORT_BACKEND=8000
+PORT_FRONTEND=5173
+
 # Contadores
 STEPS_TOTAL=0
 STEPS_PASSED=0
 STEPS_FAILED=0
 WARNINGS=0
 AUTO_MODE=false
+FULL_MODE=false
 
 #-------------------------------------------------------------------------------
 # FUNÇÕES DE UI
@@ -147,6 +154,35 @@ log() {
 #-------------------------------------------------------------------------------
 # FUNÇÕES DE VERIFICAÇÃO E INSTALAÇÃO
 #-------------------------------------------------------------------------------
+
+verify_project_structure() {
+    # Verifica se os diretórios necessários existem
+    local missing=()
+    
+    if [ ! -d "$BACKEND_DIR" ]; then
+        missing+=("backend/")
+    fi
+    
+    if [ ! -d "$FRONTEND_DIR" ]; then
+        missing+=("frontend/")
+    fi
+    
+    if [ ! -f "$PROJECT_ROOT/docker-compose.yml" ]; then
+        missing+=("docker-compose.yml")
+    fi
+    
+    if [ ${#missing[@]} -gt 0 ]; then
+        print_error "Estrutura do projeto incompleta!"
+        echo ""
+        for item in "${missing[@]}"; do
+            echo -e "  ${RED}✗${NC} Faltando: $item"
+        done
+        echo ""
+        print_info "Certifique-se de estar no diretório raiz do projeto CRM Jurídico AI"
+        print_info "e que todos os diretórios foram criados."
+        exit 1
+    fi
+}
 
 check_command() {
     local cmd="$1"
@@ -263,6 +299,12 @@ install_docker() {
     
     print_info "Instalando Docker..."
     
+    # Linux Mint usa repositório Ubuntu
+    local docker_os="$os"
+    if [ "$os" = "linuxmint" ]; then
+        docker_os="ubuntu"
+    fi
+    
     case "$os" in
         ubuntu|debian|pop|linuxmint)
             # Instalar Docker oficial
@@ -270,9 +312,16 @@ install_docker() {
                 apt-get update -qq >> "$LOG_FILE" 2>&1
                 apt-get install -y ca-certificates curl gnupg >> "$LOG_FILE" 2>&1
                 install -m 0755 -d /etc/apt/keyrings
-                curl -fsSL https://download.docker.com/linux/$os/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg >> "$LOG_FILE" 2>&1
+                curl -fsSL https://download.docker.com/linux/$docker_os/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg >> "$LOG_FILE" 2>&1
                 chmod a+r /etc/apt/keyrings/docker.gpg
-                echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/$os $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+                # Obter codename correto (Linux Mint usa base Ubuntu)
+                local codename
+                if [ "$os" = "linuxmint" ]; then
+                    codename=$(grep UBUNTU_CODENAME /etc/os-release | cut -d= -f2)
+                else
+                    codename=$(. /etc/os-release && echo "$VERSION_CODENAME")
+                fi
+                echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/$docker_os $codename stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
                 apt-get update -qq >> "$LOG_FILE" 2>&1
                 apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin >> "$LOG_FILE" 2>&1
             else
@@ -579,7 +628,7 @@ start_infrastructure() {
             print_success "PostgreSQL está pronto!"
             break
         fi
-        ((attempt++))
+        attempt=$((attempt + 1))
         sleep 1
         echo -ne "${YELLOW}  ⏳${NC} Tentativa $attempt/$max_attempts...\r"
     done
@@ -589,17 +638,21 @@ start_infrastructure() {
         exit 1
     fi
     
-    # Criar extensão pgvector
-    print_step "3.4" "Configurando extensão pgvector..."
+    # Criar extensões PostgreSQL
+    print_step "3.4" "Configurando extensões PostgreSQL..."
     docker compose exec -T db psql -U postgres -d crm_juridico -c "CREATE EXTENSION IF NOT EXISTS vector;" >> "$LOG_FILE" 2>&1 || true
-    print_success "Extensão pgvector configurada"
+    docker compose exec -T db psql -U postgres -d crm_juridico -c "CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\";" >> "$LOG_FILE" 2>&1 || true
+    docker compose exec -T db psql -U postgres -d crm_juridico -c "CREATE EXTENSION IF NOT EXISTS pg_trgm;" >> "$LOG_FILE" 2>&1 || true
+    print_success "Extensões configuradas (vector, uuid-ossp, pg_trgm)"
     
     # Criar banco de testes
     print_step "3.5" "Criando banco de dados de testes..."
     docker compose exec -T db psql -U postgres -c "DROP DATABASE IF EXISTS test_db;" >> "$LOG_FILE" 2>&1 || true
     docker compose exec -T db psql -U postgres -c "CREATE DATABASE test_db;" >> "$LOG_FILE" 2>&1
     docker compose exec -T db psql -U postgres -d test_db -c "CREATE EXTENSION IF NOT EXISTS vector;" >> "$LOG_FILE" 2>&1 || true
-    print_success "Banco de testes criado"
+    docker compose exec -T db psql -U postgres -d test_db -c "CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\";" >> "$LOG_FILE" 2>&1 || true
+    docker compose exec -T db psql -U postgres -d test_db -c "CREATE EXTENSION IF NOT EXISTS pg_trgm;" >> "$LOG_FILE" 2>&1 || true
+    print_success "Banco de testes criado com extensões"
     
     # Verificar Redis
     print_step "3.6" "Verificando Redis..."
@@ -661,18 +714,54 @@ setup_frontend() {
     fi
 }
 
+check_port_available() {
+    local port=$1
+    if command -v lsof &> /dev/null; then
+        ! lsof -i :$port &> /dev/null
+    elif command -v netstat &> /dev/null; then
+        ! netstat -tuln | grep -q ":$port "
+    else
+        # Assume disponível se não puder verificar
+        return 0
+    fi
+}
+
 start_services() {
     print_section "6. INICIANDO SERVIÇOS"
     
     # Matar processos anteriores
+    print_step "6.0" "Parando processos anteriores..."
     pkill -f "uvicorn app.main:app" 2>/dev/null || true
     pkill -f "vite" 2>/dev/null || true
     sleep 2
+    print_success "Processos anteriores finalizados"
+    
+    # Verificar portas
+    print_step "6.1" "Verificando disponibilidade de portas..."
+    local ports_ok=true
+    
+    if ! check_port_available $PORT_BACKEND; then
+        print_error "Porta $PORT_BACKEND (Backend) já está em uso!"
+        print_info "Execute: lsof -i :$PORT_BACKEND  ou  kill \$(lsof -t -i:$PORT_BACKEND)"
+        ports_ok=false
+    fi
+    
+    if ! check_port_available $PORT_FRONTEND; then
+        print_error "Porta $PORT_FRONTEND (Frontend) já está em uso!"
+        print_info "Execute: lsof -i :$PORT_FRONTEND  ou  kill \$(lsof -t -i:$PORT_FRONTEND)"
+        ports_ok=false
+    fi
+    
+    if [ "$ports_ok" = false ]; then
+        print_error "Libere as portas e execute novamente"
+        return 1
+    fi
+    print_success "Portas disponíveis"
     
     # Iniciar Backend
-    print_step "6.1" "Iniciando API Backend (porta 8000)..."
+    print_step "6.2" "Iniciando API Backend (porta $PORT_BACKEND)..."
     cd "$BACKEND_DIR"
-    nohup poetry run uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload >> "$PROJECT_ROOT/.backend.log" 2>&1 &
+    nohup poetry run uvicorn app.main:app --host 0.0.0.0 --port $PORT_BACKEND --reload >> "$PROJECT_ROOT/.backend.log" 2>&1 &
     local backend_pid=$!
     sleep 3
     
@@ -680,10 +769,11 @@ start_services() {
         print_success "Backend iniciado (PID: $backend_pid)"
     else
         print_error "Falha ao iniciar backend. Verifique .backend.log"
+        print_info "Comando: tail -50 $PROJECT_ROOT/.backend.log"
     fi
     
     # Iniciar Frontend
-    print_step "6.2" "Iniciando Frontend (porta 3000)..."
+    print_step "6.3" "Iniciando Frontend (porta $PORT_FRONTEND)..."
     cd "$FRONTEND_DIR"
     nohup npm run dev >> "$PROJECT_ROOT/.frontend.log" 2>&1 &
     local frontend_pid=$!
@@ -693,17 +783,18 @@ start_services() {
         print_success "Frontend iniciado (PID: $frontend_pid)"
     else
         print_error "Falha ao iniciar frontend. Verifique .frontend.log"
+        print_info "Comando: tail -50 $PROJECT_ROOT/.frontend.log"
     fi
     
     # Aguardar serviços
-    print_step "6.3" "Aguardando serviços estarem prontos..."
+    print_step "6.4" "Aguardando serviços estarem prontos..."
     sleep 5
 }
 
 test_api_endpoints() {
     print_section "7. TESTANDO ENDPOINTS DA API"
     
-    local api_url="http://localhost:8000"
+    local api_url="http://localhost:$PORT_BACKEND"
     
     # Health check
     print_step "7.1" "Testando Health Check..."
@@ -727,11 +818,12 @@ test_api_endpoints() {
     
     # Testar onboarding
     print_step "7.3" "Testando endpoint de Onboarding..."
+    # CNPJ válido para testes: 11222333000181 (dígitos verificadores corretos)
     local onboarding_response=$(curl -s -X POST "$api_url/api/v1/auth/onboarding" \
         -H "Content-Type: application/json" \
         -d '{
             "escritorio_nome": "Advocacia Teste Dev",
-            "escritorio_cnpj": "11.222.333/0001-44",
+            "escritorio_cnpj": "11222333000181",
             "escritorio_email": "teste@devtest.com",
             "usuario_nome": "Admin Dev",
             "usuario_email": "admin@devtest.com",
@@ -758,13 +850,14 @@ test_api_endpoints() {
             
             # Testar criar cliente
             print_step "7.5" "Testando criar cliente..."
+            # CPF válido para testes: 52998224725 (dígitos verificadores corretos)
             local cliente_response=$(curl -s -X POST "$api_url/api/v1/clientes" \
                 -H "Authorization: Bearer $token" \
                 -H "Content-Type: application/json" \
                 -d '{
                     "tipo_pessoa": "fisica",
                     "nome": "Cliente Teste Dev",
-                    "cpf": "111.222.333-44",
+                    "cpf": "52998224725",
                     "email": "cliente@teste.dev",
                     "telefone": "11999999999",
                     "consentimento_lgpd": true
@@ -796,10 +889,11 @@ print_summary() {
     echo -e "${CYAN}  ┌────────────────────────────────────────────────────────────────────────┐${NC}"
     echo -e "${CYAN}  │                              SERVIÇOS ATIVOS                           │${NC}"
     echo -e "${CYAN}  ├────────────────────────────────────────────────────────────────────────┤${NC}"
-    echo -e "${CYAN}  │${NC}  🗄️  PostgreSQL:     ${GREEN}localhost:5432${NC}                                   ${CYAN}│${NC}"
-    echo -e "${CYAN}  │${NC}  📦 Redis:          ${GREEN}localhost:6379${NC}                                   ${CYAN}│${NC}"
-    echo -e "${CYAN}  │${NC}  🚀 API Backend:    ${GREEN}http://localhost:8000${NC}                            ${CYAN}│${NC}"
-    echo -e "${CYAN}  │${NC}  🎨 Frontend:       ${GREEN}http://localhost:3000${NC}                            ${CYAN}│${NC}"
+    echo -e "${CYAN}  │${NC}  🗄️  PostgreSQL:     ${GREEN}localhost:$PORT_POSTGRES${NC}                                   ${CYAN}│${NC}"
+    echo -e "${CYAN}  │${NC}  📦 Redis:          ${GREEN}localhost:$PORT_REDIS${NC}                                   ${CYAN}│${NC}"
+    echo -e "${CYAN}  │${NC}  🚀 API Backend:    ${GREEN}http://localhost:$PORT_BACKEND${NC}                            ${CYAN}│${NC}"
+    echo -e "${CYAN}  │${NC}  📚 API Docs:       ${GREEN}http://localhost:$PORT_BACKEND/docs${NC}                       ${CYAN}│${NC}"
+    echo -e "${CYAN}  │${NC}  🎨 Frontend:       ${GREEN}http://localhost:$PORT_FRONTEND${NC}                            ${CYAN}│${NC}"
     echo -e "${CYAN}  └────────────────────────────────────────────────────────────────────────┘${NC}"
     
     echo ""
@@ -834,6 +928,7 @@ show_help() {
     echo "Opções:"
     echo "  --help, -h      Mostra esta ajuda"
     echo "  --auto, -y      Execução automática sem prompts (instala tudo)"
+    echo "  --full          Execução completa com lint, types e cobertura"
     echo "  --check         Apenas verifica pré-requisitos"
     echo "  --infra         Apenas inicia infraestrutura (DB + Redis)"
     echo "  --backend       Apenas configura backend"
@@ -841,13 +936,16 @@ show_help() {
     echo "  --test          Apenas testa endpoints"
     echo "  --stop          Para todos os serviços"
     echo "  --clean         Para e remove todos os dados"
+    echo "  --status        Mostra status dos serviços"
     echo ""
     echo "Sem argumentos: executa configuração completa (interativo)"
     echo ""
     echo "Exemplos:"
     echo "  $0              # Interativo, pede confirmação"
     echo "  $0 --auto       # Automático, instala tudo sem perguntar"
+    echo "  $0 --full       # Completo com lint, types e cobertura"
     echo "  $0 --check      # Apenas verifica (e instala) dependências"
+    echo "  $0 --status     # Verifica se serviços estão rodando"
 }
 
 stop_services() {
@@ -884,6 +982,131 @@ clean_all() {
     print_success "Ambiente limpo!"
 }
 
+show_status() {
+    print_section "STATUS DOS SERVIÇOS"
+    
+    echo ""
+    
+    # PostgreSQL
+    print_step "1" "PostgreSQL (porta $PORT_POSTGRES)..."
+    if docker compose ps 2>/dev/null | grep -q "crm_juridico_db.*Up"; then
+        print_success "PostgreSQL está rodando"
+    else
+        print_error "PostgreSQL não está rodando"
+    fi
+    
+    # Redis
+    print_step "2" "Redis (porta $PORT_REDIS)..."
+    if docker compose ps 2>/dev/null | grep -q "crm_juridico_redis.*Up"; then
+        print_success "Redis está rodando"
+    else
+        print_error "Redis não está rodando"
+    fi
+    
+    # Backend
+    print_step "3" "Backend API (porta $PORT_BACKEND)..."
+    if curl -s "http://localhost:$PORT_BACKEND/health" 2>/dev/null | grep -q "healthy"; then
+        print_success "Backend está respondendo"
+    elif pgrep -f "uvicorn app.main:app" > /dev/null 2>&1; then
+        print_warning "Backend está rodando mas não respondendo"
+    else
+        print_error "Backend não está rodando"
+    fi
+    
+    # Frontend
+    print_step "4" "Frontend (porta $PORT_FRONTEND)..."
+    if curl -s "http://localhost:$PORT_FRONTEND" > /dev/null 2>&1; then
+        print_success "Frontend está respondendo"
+    elif pgrep -f "vite" > /dev/null 2>&1; then
+        print_warning "Frontend está rodando mas não respondendo"
+    else
+        print_error "Frontend não está rodando"
+    fi
+    
+    echo ""
+    echo -e "${CYAN}  ┌────────────────────────────────────────────────────────────────────────┐${NC}"
+    echo -e "${CYAN}  │                              URLS DOS SERVIÇOS                         │${NC}"
+    echo -e "${CYAN}  ├────────────────────────────────────────────────────────────────────────┤${NC}"
+    echo -e "${CYAN}  │${NC}  🚀 API:      ${GREEN}http://localhost:$PORT_BACKEND${NC}                                  ${CYAN}│${NC}"
+    echo -e "${CYAN}  │${NC}  📚 Docs:     ${GREEN}http://localhost:$PORT_BACKEND/docs${NC}                             ${CYAN}│${NC}"
+    echo -e "${CYAN}  │${NC}  🎨 Frontend: ${GREEN}http://localhost:$PORT_FRONTEND${NC}                                  ${CYAN}│${NC}"
+    echo -e "${CYAN}  └────────────────────────────────────────────────────────────────────────┘${NC}"
+    echo ""
+}
+
+run_full_tests() {
+    print_section "EXECUÇÃO COMPLETA (LINT + TYPES + TESTES + COBERTURA)"
+    
+    local all_passed=true
+    
+    cd "$BACKEND_DIR"
+    
+    # Lint com Ruff
+    print_step "1" "Executando Ruff (linter)..."
+    if poetry run ruff check . >> "$LOG_FILE" 2>&1; then
+        print_success "Ruff: Nenhum problema encontrado"
+    else
+        print_warning "Ruff: Alguns problemas encontrados (verifique log)"
+        all_passed=false
+    fi
+    
+    # Type checking com MyPy
+    print_step "2" "Executando MyPy (type checker)..."
+    if poetry run mypy app --ignore-missing-imports >> "$LOG_FILE" 2>&1; then
+        print_success "MyPy: Tipos OK"
+    else
+        print_warning "MyPy: Alguns problemas de tipos (verifique log)"
+        all_passed=false
+    fi
+    
+    # Testes com cobertura
+    print_step "3" "Executando testes com cobertura..."
+    echo ""
+    if poetry run pytest -v --cov=app --cov-report=term-missing --cov-report=html 2>&1 | tee -a "$LOG_FILE" | grep -E "^(tests/|PASSED|FAILED|ERROR|=====|TOTAL|Name)"; then
+        echo ""
+        print_success "Testes executados"
+    else
+        echo ""
+        print_error "Alguns testes falharam"
+        all_passed=false
+    fi
+    
+    # Verificar cobertura mínima
+    print_step "4" "Verificando cobertura mínima (70%)..."
+    local coverage=$(poetry run coverage report 2>/dev/null | grep TOTAL | awk '{print $4}' | tr -d '%')
+    if [ -n "$coverage" ] && [ "$coverage" -ge 70 ]; then
+        print_success "Cobertura: ${coverage}% (acima de 70%)"
+    elif [ -n "$coverage" ]; then
+        print_warning "Cobertura: ${coverage}% (abaixo de 70%)"
+        all_passed=false
+    else
+        print_info "Não foi possível verificar cobertura"
+    fi
+    
+    # Frontend lint
+    print_step "5" "Verificando Frontend (TypeScript)..."
+    cd "$FRONTEND_DIR"
+    if npm run build >> "$LOG_FILE" 2>&1; then
+        print_success "Frontend: Build OK (sem erros TypeScript)"
+    else
+        print_warning "Frontend: Build com problemas"
+        all_passed=false
+    fi
+    
+    echo ""
+    if [ "$all_passed" = true ]; then
+        echo -e "${GREEN}  ════════════════════════════════════════════════════════════════════════${NC}"
+        echo -e "${GREEN}    ✅ Todos os testes passaram! Pronto para deploy.${NC}"
+        echo -e "${GREEN}  ════════════════════════════════════════════════════════════════════════${NC}"
+    else
+        echo -e "${YELLOW}  ════════════════════════════════════════════════════════════════════════${NC}"
+        echo -e "${YELLOW}    ⚠️  Alguns testes têm warnings. Revise antes do deploy.${NC}"
+        echo -e "${YELLOW}  ════════════════════════════════════════════════════════════════════════${NC}"
+    fi
+    echo ""
+    print_info "Relatório de cobertura HTML: backend/htmlcov/index.html"
+}
+
 #-------------------------------------------------------------------------------
 # MAIN
 #-------------------------------------------------------------------------------
@@ -891,6 +1114,11 @@ clean_all() {
 main() {
     # Inicializar log
     echo "=== Dev Setup Log - $(date) ===" > "$LOG_FILE"
+    
+    # Verificar estrutura do projeto (exceto para help)
+    if [ "${1:-}" != "--help" ] && [ "${1:-}" != "-h" ]; then
+        verify_project_structure
+    fi
     
     case "${1:-}" in
         --help|-h)
@@ -937,6 +1165,22 @@ main() {
         --clean)
             print_banner
             clean_all
+            ;;
+        --status)
+            print_banner
+            cd "$PROJECT_ROOT"
+            show_status
+            ;;
+        --full)
+            # Modo completo - lint, types, cobertura
+            FULL_MODE=true
+            print_banner
+            check_prerequisites
+            setup_environment_files
+            start_infrastructure
+            setup_backend
+            setup_frontend
+            run_full_tests
             ;;
         "")
             # Execução completa interativa
