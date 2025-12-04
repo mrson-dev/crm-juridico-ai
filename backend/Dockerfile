@@ -13,11 +13,11 @@ RUN apt-get update && apt-get install -y \
 RUN pip install poetry==1.7.1
 
 # Copiar arquivos de dependência
-COPY pyproject.toml poetry.lock* ./
+COPY pyproject.toml poetry.lock* README.md ./
 
-# Instalar dependências (sem dev)
+# Instalar dependências (sem dev, sem instalar o projeto)
 RUN poetry config virtualenvs.create false \
-    && poetry install --no-interaction --no-ansi --only main
+    && poetry install --no-interaction --no-ansi --only main --no-root
 
 # Copiar código
 COPY . .
