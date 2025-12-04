@@ -32,8 +32,8 @@ DIM='\033[2m'
 #-------------------------------------------------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
-CURRENT_BRANCH=$(git branch --show-current 2>/dev/null || echo "main")
 REMOTE_NAME="origin"
+CURRENT_BRANCH=""  # Inicializado depois em init_git_vars()
 
 #-------------------------------------------------------------------------------
 # FUNÇÕES DE UI
@@ -89,8 +89,13 @@ confirm() {
 check_git_repo() {
     if ! git rev-parse --is-inside-work-tree &>/dev/null; then
         print_error "Não está em um repositório Git!"
+        print_info "Execute este script dentro do diretório do projeto clonado."
         exit 1
     fi
+}
+
+init_git_vars() {
+    CURRENT_BRANCH=$(git branch --show-current 2>/dev/null || echo "main")
 }
 
 get_changed_files() {
@@ -737,6 +742,7 @@ show_help() {
 
 cd "$PROJECT_ROOT"
 check_git_repo
+init_git_vars
 
 case "${1:-help}" in
     status|st|s)        cmd_status ;;
