@@ -184,7 +184,7 @@ install_package() {
     print_info "Instalando $package..."
     
     case "$os" in
-        ubuntu|debian|pop)
+        ubuntu|debian|pop|linuxmint)
             if [ "$EUID" -eq 0 ]; then
                 apt-get update -qq >> "$LOG_FILE" 2>&1
                 apt-get install -y "$package" >> "$LOG_FILE" 2>&1
@@ -223,7 +223,7 @@ install_nodejs() {
     print_info "Instalando Node.js v20 LTS..."
     
     case "$os" in
-        ubuntu|debian|pop)
+        ubuntu|debian|pop|linuxmint)
             # Usar NodeSource para versão LTS
             if [ "$EUID" -eq 0 ]; then
                 curl -fsSL https://deb.nodesource.com/setup_20.x | bash - >> "$LOG_FILE" 2>&1
@@ -264,7 +264,7 @@ install_docker() {
     print_info "Instalando Docker..."
     
     case "$os" in
-        ubuntu|debian|pop)
+        ubuntu|debian|pop|linuxmint)
             # Instalar Docker oficial
             if [ "$EUID" -eq 0 ]; then
                 apt-get update -qq >> "$LOG_FILE" 2>&1
