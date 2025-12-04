@@ -1,0 +1,10 @@
+# Valores padrão para desenvolvimento
+# Copie para terraform.tfvars e preencha os valores
+
+project_id     = "seu-projeto-gcp"
+region         = "southamerica-east1"
+environment    = "dev"
+db_password    = ""  # Gerar senha forte
+jwt_secret_key = ""  # openssl rand -hex 32
+gemini_api_key = ""  # Obter em https://aistudio.google.com/
+domain         = ""  # Opcional: seu-dominio.com.br

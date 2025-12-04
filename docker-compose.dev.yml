@@ -1,0 +1,272 @@
+# ============================================
+# Docker Compose - Ambiente de Desenvolvimento
+# ============================================
+# Uso: docker compose -f docker-compose.dev.yml up
+#
+# Este arquivo configura um ambiente completo para
+# desenvolvimento e testes locais antes do deploy.
+
+services:
+  # ==========================================
+  # PostgreSQL com pgvector
+  # ==========================================
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: crm_juridico_db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: crm_juridico
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - crm-network
+
+  # ==========================================
+  # Redis
+  # ==========================================
+  redis:
+    image: redis:7-alpine
+    container_name: crm_juridico_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - crm-network
+
+  # ==========================================
+  # API Backend (FastAPI)
+  # ==========================================
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: crm_juridico_api
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/crm_juridico
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/2
+      - SECRET_KEY=dev-secret-key-for-local-testing-only
+      - DEBUG=true
+      - ENVIRONMENT=development
+      - GCP_PROJECT_ID=local-dev
+      - GCS_BUCKET_DOCUMENTOS=local-bucket
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - GEMINI_MODEL=gemini-1.5-flash
+      - ALLOWED_ORIGINS=["http://localhost:3000","http://localhost:5173","http://127.0.0.1:3000"]
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend/app:/app/app:ro
+      - ./backend/alembic:/app/alembic:ro
+      - upload_data:/app/uploads
+    command: >
+      sh -c "
+        echo 'Aguardando banco de dados...' &&
+        sleep 3 &&
+        echo 'Aplicando migrations...' &&
+        alembic upgrade head &&
+        echo 'Iniciando API...' &&
+        uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+      "
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - crm-network
+
+  # ==========================================
+  # Frontend (React + Vite)
+  # ==========================================
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    container_name: crm_juridico_frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - VITE_API_URL=http://localhost:8000
+    depends_on:
+      api:
+        condition: service_healthy
+    volumes:
+      - ./frontend/src:/app/src:ro
+      - ./frontend/public:/app/public:ro
+    networks:
+      - crm-network
+
+  # ==========================================
+  # Celery Worker
+  # ==========================================
+  celery-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: crm_juridico_worker
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/crm_juridico
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/2
+      - SECRET_KEY=dev-secret-key-for-local-testing-only
+      - ENVIRONMENT=development
+      - GCP_PROJECT_ID=local-dev
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend/app:/app/app:ro
+      - upload_data:/app/uploads
+    command: celery -A app.workers.celery_app worker --loglevel=info --concurrency=2
+    networks:
+      - crm-network
+
+  # ==========================================
+  # Celery Beat (Scheduler)
+  # ==========================================
+  celery-beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: crm_juridico_beat
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/crm_juridico
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/2
+      - SECRET_KEY=dev-secret-key-for-local-testing-only
+      - ENVIRONMENT=development
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      celery-worker:
+        condition: service_started
+    volumes:
+      - ./backend/app:/app/app:ro
+    command: celery -A app.workers.celery_app beat --loglevel=info
+    networks:
+      - crm-network
+
+  # ==========================================
+  # Flower (Celery Monitor)
+  # ==========================================
+  flower:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: crm_juridico_flower
+    ports:
+      - "5555:5555"
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/2
+    depends_on:
+      - redis
+      - celery-worker
+    command: celery -A app.workers.celery_app flower --port=5555
+    networks:
+      - crm-network
+
+  # ==========================================
+  # pgAdmin (Database GUI)
+  # ==========================================
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: crm_juridico_pgadmin
+    ports:
+      - "5050:80"
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@crm-juridico.local
+      PGADMIN_DEFAULT_PASSWORD: admin123
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    depends_on:
+      - db
+    networks:
+      - crm-network
+    profiles:
+      - tools
+
+  # ==========================================
+  # Redis Commander (Redis GUI)
+  # ==========================================
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: crm_juridico_redis_commander
+    ports:
+      - "8081:8081"
+    environment:
+      - REDIS_HOSTS=local:redis:6379
+    depends_on:
+      - redis
+    networks:
+      - crm-network
+    profiles:
+      - tools
+
+  # ==========================================
+  # MinIO (S3-compatible storage para dev)
+  # ==========================================
+  minio:
+    image: minio/minio:latest
+    container_name: crm_juridico_minio
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin123
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - crm-network
+    profiles:
+      - storage
+
+networks:
+  crm-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  pgadmin_data:
+  minio_data:
+  upload_data:
